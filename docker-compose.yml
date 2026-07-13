@@ -1,0 +1,198 @@
+x-backend-environment: &backend-environment
+  APP_ENV: ${APP_ENV:-development}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,testserver,api}
+  SESSION_SECRET: ${SESSION_SECRET:-local-compose-session-secret-change-me}
+  SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-visibility_session}
+  SESSION_SAME_SITE: ${SESSION_SAME_SITE:-lax}
+  SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-28800}
+  SESSION_IDLE_TIMEOUT_SECONDS: ${SESSION_IDLE_TIMEOUT_SECONDS:-3600}
+  SESSION_TOUCH_INTERVAL_SECONDS: ${SESSION_TOUCH_INTERVAL_SECONDS:-300}
+  SESSION_RETENTION_SECONDS: ${SESSION_RETENTION_SECONDS:-604800}
+  SESSION_CLEANUP_BATCH_SIZE: ${SESSION_CLEANUP_BATCH_SIZE:-500}
+  MOCK_AUTH_ENABLED: ${MOCK_AUTH_ENABLED:-true}
+  SECURE_COOKIES: ${SECURE_COOKIES:-false}
+  EXPOSE_API_DOCS: ${EXPOSE_API_DOCS:-true}
+  METRICS_ENABLED: ${METRICS_ENABLED:-true}
+  METRICS_BEARER_TOKEN: ${METRICS_BEARER_TOKEN:-}
+  OIDC_SERVER_METADATA_URL: ${OIDC_SERVER_METADATA_URL:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+  OIDC_AUTO_LINK_VERIFIED_EMAIL: ${OIDC_AUTO_LINK_VERIFIED_EMAIL:-false}
+  OIDC_SCOPES: ${OIDC_SCOPES:-openid profile email}
+  AUDIT_STEP_DELAY_SECONDS: ${AUDIT_STEP_DELAY_SECONDS:-0.35}
+  AUDIT_RATE_LIMIT: ${AUDIT_RATE_LIMIT:-3}
+  AUDIT_RATE_WINDOW_SECONDS: ${AUDIT_RATE_WINDOW_SECONDS:-60}
+  AUDIT_MAX_ATTEMPTS: ${AUDIT_MAX_ATTEMPTS:-3}
+  AUDIT_LEASE_SECONDS: ${AUDIT_LEASE_SECONDS:-30}
+  AUDIT_RETRY_DELAY_SECONDS: ${AUDIT_RETRY_DELAY_SECONDS:-1}
+  AUDIT_RETRY_MAX_DELAY_SECONDS: ${AUDIT_RETRY_MAX_DELAY_SECONDS:-60}
+  AUDIT_RETRY_JITTER_RATIO: ${AUDIT_RETRY_JITTER_RATIO:-0.2}
+  WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-0.5}
+  WORKER_MAX_BACKOFF_SECONDS: ${WORKER_MAX_BACKOFF_SECONDS:-30}
+  WORKER_HEARTBEAT_INTERVAL_SECONDS: ${WORKER_HEARTBEAT_INTERVAL_SECONDS:-5}
+  WORKER_HEALTH_TIMEOUT_SECONDS: ${WORKER_HEALTH_TIMEOUT_SECONDS:-30}
+  CURSOR_PAGE_SIZE: ${CURSOR_PAGE_SIZE:-20}
+  CURSOR_MAX_PAGE_SIZE: ${CURSOR_MAX_PAGE_SIZE:-100}
+  AUDIT_EVIDENCE_PAGE_SIZE: ${AUDIT_EVIDENCE_PAGE_SIZE:-20}
+  AUDIT_EVIDENCE_MAX_PAGE_SIZE: ${AUDIT_EVIDENCE_MAX_PAGE_SIZE:-100}
+  DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-10}
+  DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-20}
+  DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:-10}
+  DATABASE_POOL_RECYCLE_SECONDS: ${DATABASE_POOL_RECYCLE_SECONDS:-1800}
+  DATABASE_STATEMENT_TIMEOUT_MS: ${DATABASE_STATEMENT_TIMEOUT_MS:-30000}
+  DATABASE_LOCK_TIMEOUT_MS: ${DATABASE_LOCK_TIMEOUT_MS:-5000}
+  DATABASE_IDLE_TRANSACTION_TIMEOUT_MS: ${DATABASE_IDLE_TRANSACTION_TIMEOUT_MS:-60000}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-visibility-audit}
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+
+x-postgres-image: &postgres-image
+  image: visibilitystack-postgres:${IMAGE_TAG:-local}
+  build:
+    context: docker/postgres
+    dockerfile: Dockerfile
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: 256
+
+services:
+  db:
+    <<: *postgres-image
+    environment:
+      POSTGRES_DB: visibility
+      POSTGRES_USER: visibility
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-visibility}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U visibility -d visibility"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    restart: unless-stopped
+
+  db-roles:
+    <<: *postgres-image
+    environment:
+      DB_HOST: db
+      POSTGRES_DB: visibility
+      POSTGRES_USER: visibility
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-visibility}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-visibility-app-local}
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-visibility-worker-local}
+    command: ["sh", "/scripts/configure-roles.sh"]
+    volumes:
+      - ./docker/postgres/configure-roles.sh:/scripts/configure-roles.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      <<: *backend-environment
+      DATABASE_URL: postgresql+psycopg://visibility:${POSTGRES_PASSWORD:-visibility}@db:5432/visibility
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && if [ "$$APP_ENV" != "production" ]; then python -m app.seed; fi
+    depends_on:
+      db-roles:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      <<: *backend-environment
+      DATABASE_URL: postgresql+psycopg://visibility_app:${APP_DB_PASSWORD:-visibility-app-local}@db:5432/visibility
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/ready', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      <<: *backend-environment
+      DATABASE_URL: postgresql+psycopg://visibility_worker:${WORKER_DB_PASSWORD:-visibility-worker-local}@db:5432/visibility
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker_health"]
+      interval: 10s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+
+  web:
+    build:
+      context: frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-3000}:3000"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+
+volumes:
+  postgres_data:

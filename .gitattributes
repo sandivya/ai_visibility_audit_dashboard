@@ -1,0 +1,14 @@
+* text=auto
+
+# Entrypoints and database bootstrap scripts execute in Linux containers.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Never apply text conversion to supplied documents or visual assets.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary

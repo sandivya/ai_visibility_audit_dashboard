@@ -1,0 +1,6 @@
+FROM postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+
+# The official entrypoint supports an already-unprivileged process. Removing
+# gosu eliminates an unused privilege-drop binary and its vulnerable Go runtime.
+RUN rm -f /usr/local/bin/gosu
+USER postgres

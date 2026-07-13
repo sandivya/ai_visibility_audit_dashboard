@@ -1,0 +1,264 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+# A new push supersedes work for the same branch or pull request.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Application quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+        env:
+          POSTGRES_DB: visibility_test
+          POSTGRES_USER: visibility
+          POSTGRES_PASSWORD: visibility
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U visibility -d visibility_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://visibility:visibility@localhost:5432/visibility_test
+      RLS_DATABASE_URL: postgresql+psycopg://visibility_app:ci-app-password@localhost:5432/visibility_test
+      WORKER_DATABASE_URL: postgresql+psycopg://visibility_worker:ci-worker-password@localhost:5432/visibility_test
+      APP_ENV: test
+      SESSION_SECRET: ci-session-secret-with-sufficient-entropy
+      AUDIT_STEP_DELAY_SECONDS: "0"
+      AUDIT_RATE_LIMIT: "20"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          enable-cache: true
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install locked Python dependencies
+        run: uv sync --locked --dev
+      - name: Lint backend
+        run: uv run ruff check backend
+      - name: Check backend formatting
+        run: uv run ruff format --check backend
+      - name: Type-check backend
+        run: uv run mypy backend/app
+      - name: Run backend static security checks
+        run: uv run bandit -q -r backend/app
+      - name: Audit Python runtime dependencies
+        run: |
+          uv export --locked --no-dev --no-hashes --output-file "$RUNNER_TEMP/runtime-requirements.txt"
+          uv run pip-audit -r "$RUNNER_TEMP/runtime-requirements.txt" --progress-spinner off
+      - name: Configure restricted database roles
+        env:
+          DB_HOST: localhost
+          POSTGRES_DB: visibility_test
+          POSTGRES_USER: visibility
+          POSTGRES_PASSWORD: visibility
+          APP_DB_PASSWORD: ci-app-password
+          WORKER_DB_PASSWORD: ci-worker-password
+        run: sh docker/postgres/configure-roles.sh
+      - name: Verify reversible PostgreSQL migration and restricted roles
+        working-directory: backend
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+          uv run python -m app.seed
+          uv run python -m app.verify_rls
+          DATABASE_URL="$RLS_DATABASE_URL" uv run python -m app.restricted_role_smoke create
+          DATABASE_URL="$WORKER_DATABASE_URL" uv run python -m app.restricted_role_smoke worker
+          DATABASE_URL="$RLS_DATABASE_URL" uv run python -m app.restricted_role_smoke complete
+      - name: Test backend
+        run: uv run pytest
+      - name: Install Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Test frontend
+        working-directory: frontend
+        run: npm run test:coverage
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
+      - name: Check frontend formatting
+        working-directory: frontend
+        run: npm run format:check
+      - name: Type-check frontend
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Build production frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+  source-security:
+    name: Source and configuration security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Scan dependencies, secrets, and configuration
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          version: v0.70.0
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          skip-dirs: .git
+          skip-files: digest.txt
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          timeout: 10m0s
+
+  end-to-end:
+    name: Browser journeys and accessibility
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: visibilitystack-e2e
+      PLAYWRIGHT_BASE_URL: http://localhost:3000
+      AUDIT_RATE_LIMIT: "20"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked browser-test dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Install Chromium and system dependencies
+        working-directory: frontend
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Start the production-like stack
+        run: docker compose up --build --detach --wait --wait-timeout 180
+      - name: Run browser and accessibility tests
+        working-directory: frontend
+        run: npm run test:e2e
+      - name: Print service logs after failure
+        if: failure()
+        run: docker compose logs --no-color --timestamps
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-diagnostics
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Stop the test stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  database-security:
+    name: Database container security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      IMAGE_TAG: ci
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Build pinned PostgreSQL image
+        run: docker compose build --pull db
+      - name: Scan PostgreSQL runtime image
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          version: v0.70.0
+          scan-type: image
+          image-ref: visibilitystack-postgres:ci
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          timeout: 10m0s
+      - name: Generate PostgreSQL SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: visibilitystack-postgres:ci
+          format: spdx-json
+          artifact-name: visibilitystack-postgres.spdx.json
+          upload-artifact-retention: 14
+          upload-release-assets: false
+
+  container-security:
+    name: Container security (${{ matrix.service }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [migrate, api, worker, web]
+    env:
+      COMPOSE_PROJECT_NAME: visibilitystack
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Build pinned runtime image
+        run: docker compose build --pull ${{ matrix.service }}
+      - name: Scan runtime image
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          version: v0.70.0
+          scan-type: image
+          image-ref: visibilitystack-${{ matrix.service }}:latest
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          timeout: 10m0s
+      - name: Generate runtime SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: visibilitystack-${{ matrix.service }}:latest
+          format: spdx-json
+          artifact-name: visibilitystack-${{ matrix.service }}.spdx.json
+          upload-artifact-retention: 14
+          upload-release-assets: false

@@ -1,0 +1,50 @@
+[project]
+name = "visibilitystack-dashboard"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.14",
+  "authlib>=1.7",
+  "fastapi>=0.115",
+  "httpx>=0.28",
+  "itsdangerous>=2.2",
+  "opentelemetry-api>=1.43.0",
+  "opentelemetry-exporter-otlp-proto-http>=1.43.0",
+  "opentelemetry-instrumentation-fastapi>=0.64b0",
+  "opentelemetry-instrumentation-sqlalchemy>=0.64b0",
+  "opentelemetry-sdk>=1.43.0",
+  "prometheus-client>=0.21",
+  "psycopg[binary]>=3.2",
+  "pydantic-settings>=2.7",
+  "sqlalchemy>=2.0",
+  "uvicorn[standard]>=0.34",
+]
+
+[dependency-groups]
+dev = [
+  "bandit>=1.9",
+  "mypy>=1.14",
+  "pip-audit>=2.9",
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+addopts = "-q --cov=app --cov-report=term-missing --cov-fail-under=75"
+pythonpath = ["backend"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["backend/alembic"]

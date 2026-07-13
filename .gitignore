@@ -1,0 +1,29 @@
+# Local configuration and secrets. Keep sanitized examples at any depth.
+.env*
+!.env.example
+**/.env*
+!**/.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+*.db
+*.tsbuildinfo
+htmlcov/
+coverage/
+node_modules/
+.next/
+playwright-report/
+test-results/
+dist/
+tmp/
+
+# Generated repository snapshot.
+digest.txt
