@@ -286,7 +286,10 @@ main {
 }
 
 .tenant select {
-  padding: 9px 10px;
+  overflow: hidden;
+  padding: 9px 36px 9px 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-identity {

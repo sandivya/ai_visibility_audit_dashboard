@@ -5,16 +5,28 @@ import app.services as services
 import pytest
 from app.config import get_settings
 from app.database import SessionLocal
-from app.models import Audit, AuditEvent, AuditEventType, AuditStatus, Project, utcnow
+from app.models import (
+    Audit,
+    AuditEvent,
+    AuditEventType,
+    AuditStatus,
+    Project,
+    RecommendationStatus,
+    utcnow,
+)
 from app.services import (
     RateLimitExceeded,
+    build_simulated_evidence,
+    calculate_visibility_score,
     claim_next_audit,
     create_audit,
+    refresh_completed_simulated_audit,
     run_worker_once,
     transition,
 )
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 
 def start_and_process(
@@ -35,12 +47,123 @@ def start_and_process(
 def test_audit_completes_with_evidence(client: TestClient, alice_headers: dict[str, str]) -> None:
     detail = start_and_process(client, "prj_acme_demo", alice_headers, "complete-once")
     assert detail["status"] == "completed"
-    assert detail["visibility_score"] == 68
+    assert 0 <= detail["visibility_score"] <= 100
     assert len(detail["pages"]) == len(detail["prompts"]) == 2
     assert len(detail["findings"]) == len(detail["recommendations"]) == 2
     assert detail["events"][0]["event_type"] == "audit_created"
     assert detail["events"][-1]["event_type"] == "audit_completed"
     assert sum(event["event_type"] == "page_analyzed" for event in detail["events"]) == 2
+
+
+def test_visibility_score_is_derived_from_evidence() -> None:
+    healthy_pages = [
+        services.AuditPage(
+            url="https://example.com", title="Example official website", status_code=200
+        )
+    ]
+    visible_prompts = [
+        services.AuditPrompt(
+            prompt="best example tools",
+            mentioned_brand=True,
+            competitors_mentioned=[],
+            source="test",
+        )
+    ]
+    hidden_prompts = [
+        services.AuditPrompt(
+            prompt="best example tools",
+            mentioned_brand=False,
+            competitors_mentioned=["competitor.com"],
+            source="test",
+        )
+    ]
+
+    assert calculate_visibility_score(healthy_pages, visible_prompts) == 100
+    assert calculate_visibility_score(healthy_pages, hidden_prompts) == 45
+
+
+def test_simulated_audits_produce_coherent_run_specific_results() -> None:
+    project = Project(
+        id="prj_score_variation",
+        org_id="org_beta",
+        name="Beta Finance",
+        domain="betafinance.com",
+        competitors=["finwise.com", "moneybeam.com"],
+    )
+    scores: set[int] = set()
+    secondary_categories: set[str] = set()
+
+    for audit_id in (
+        "aud_963f7ffc53cb44178a58",
+        "aud_34987eb3b393449c9130",
+        "aud_9900e1f18526448eb901",
+    ):
+        audit = Audit(
+            id=audit_id,
+            org_id=project.org_id,
+            project_id=project.id,
+            idempotency_key=audit_id,
+            status=AuditStatus.processing,
+            project=project,
+        )
+        pages, prompts, findings, recommendations = build_simulated_evidence(audit)
+        scores.add(calculate_visibility_score(pages, prompts))
+        secondary_categories.add(findings[1].category)
+        assert len(pages) == len(prompts) == len(findings) == len(recommendations) == 2
+        if pages[1].title == "Products":
+            assert findings[1].category == "technical_seo"
+            assert recommendations[1].title == "Improve product metadata"
+
+    assert len(scores) == 3
+    assert len(secondary_categories) >= 2
+
+
+def test_simulated_audit_refresh_preserves_identity_status_and_timestamps(
+    client: TestClient, bob_headers: dict[str, str]
+) -> None:
+    detail = start_and_process(client, "prj_beta_demo", bob_headers, "legacy-refresh")
+    audit_id = str(detail["id"])
+
+    with SessionLocal() as db:
+        audit = db.scalar(
+            select(Audit)
+            .options(
+                selectinload(Audit.project),
+                selectinload(Audit.pages),
+                selectinload(Audit.prompts),
+                selectinload(Audit.findings),
+                selectinload(Audit.recommendations),
+                selectinload(Audit.events),
+            )
+            .where(Audit.id == audit_id)
+        )
+        assert audit is not None
+        child_ids = {
+            *(row.id for row in audit.pages),
+            *(row.id for row in audit.prompts),
+            *(row.id for row in audit.findings),
+            *(row.id for row in audit.recommendations),
+        }
+        audit.recommendations[0].status = RecommendationStatus.in_progress
+        score = refresh_completed_simulated_audit(audit)
+        db.commit()
+
+        completion = next(
+            row for row in audit.events if row.event_type == AuditEventType.audit_completed
+        )
+        refreshed_child_ids = {
+            *(row.id for row in audit.pages),
+            *(row.id for row in audit.prompts),
+            *(row.id for row in audit.findings),
+            *(row.id for row in audit.recommendations),
+        }
+        assert refreshed_child_ids == child_ids
+        assert audit.recommendations[0].status == RecommendationStatus.in_progress
+        assert audit.updated_at == completion.created_at
+        assert completion.message == f"Audit completed with score {score}"
+        assert any(
+            row.message == f"Finding created: {audit.findings[1].title}" for row in audit.events
+        )
 
 
 def test_idempotency_returns_original_audit(

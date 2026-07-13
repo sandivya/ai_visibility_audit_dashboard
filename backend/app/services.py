@@ -11,6 +11,7 @@ from math import ceil
 from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import get_settings
 from app.database import SessionLocal, set_tenant_context
@@ -82,6 +83,259 @@ def transition(audit: Audit, target: AuditStatus) -> None:
         raise ValueError(f"Invalid audit transition: {audit.status.value} -> {target.value}")
     audit.status = target
     audit.updated_at = utcnow()
+
+
+def calculate_visibility_score(pages: list[AuditPage], prompts: list[AuditPrompt]) -> int:
+    """Calculate a transparent score from the evidence produced by an audit."""
+    if not pages and not prompts:
+        return 0
+
+    healthy_page_rate = (
+        sum(200 <= page.status_code < 400 for page in pages) / len(pages) if pages else 0
+    )
+    descriptive_title_rate = (
+        sum(len(page.title.split()) >= 3 for page in pages) / len(pages) if pages else 0
+    )
+    mention_rate = (
+        sum(prompt.mentioned_brand for prompt in prompts) / len(prompts) if prompts else 0
+    )
+    competitor_free_rate = (
+        sum(not prompt.competitors_mentioned for prompt in prompts) / len(prompts) if prompts else 0
+    )
+    score = (
+        20
+        + (50 * mention_rate)
+        + (15 * healthy_page_rate)
+        + (10 * descriptive_title_rate)
+        + (5 * competitor_free_rate)
+    )
+    return max(0, min(100, round(score)))
+
+
+def build_simulated_evidence(
+    audit: Audit,
+) -> tuple[list[AuditPage], list[AuditPrompt], list[Finding], list[Recommendation]]:
+    """Build deterministic-but-run-specific evidence for the simulated provider."""
+    domain = audit.project.domain
+    brand = audit.project.name
+    competitors = audit.project.competitors
+    simulation = hashlib.sha256(f"{audit.id}:{domain}".encode()).digest()
+    trusted_prompt_mentions_brand = simulation[0] % 5 != 0
+    trusted_prompt_competitors = competitors[1:2] if simulation[1] % 2 == 0 else []
+    product_title = f"{brand} products and solutions" if simulation[2] % 3 else "Products"
+
+    page_rows = [
+        AuditPage(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            url=f"https://{domain}/",
+            title=f"{brand} - Official site",
+            status_code=200,
+        ),
+        AuditPage(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            url=f"https://{domain}/products",
+            title=product_title,
+            status_code=200,
+        ),
+    ]
+    prompt_rows = [
+        AuditPrompt(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            prompt=f"best {brand.lower()} alternatives",
+            mentioned_brand=False,
+            competitors_mentioned=competitors[:1],
+            source="simulated_ai_search",
+        ),
+        AuditPrompt(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            prompt=f"is {brand.lower()} a trusted brand",
+            mentioned_brand=trusted_prompt_mentions_brand,
+            competitors_mentioned=trusted_prompt_competitors,
+            source="simulated_ai_search",
+        ),
+    ]
+
+    if product_title == "Products":
+        secondary_finding = Finding(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            severity="medium",
+            category="technical_seo",
+            title="Product page title lacks context",
+            description="The product page title does not communicate audience or differentiation.",
+        )
+        secondary_recommendation = Recommendation(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            priority="medium",
+            title="Improve product metadata",
+            description="Add category, audience, and differentiators to product page metadata.",
+        )
+    elif not trusted_prompt_mentions_brand:
+        secondary_finding = Finding(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            severity="high",
+            category="content_gap",
+            title="Brand absent from a trust-focused prompt",
+            description=f"{brand} was not mentioned for a prompt evaluating brand trust.",
+        )
+        secondary_recommendation = Recommendation(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            priority="high",
+            title="Strengthen trusted-brand signals",
+            description="Publish verifiable proof points, customer outcomes, and independent trust signals.",
+        )
+    elif trusted_prompt_competitors:
+        secondary_finding = Finding(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            severity="medium",
+            category="competitor_mention",
+            title="Competitor surfaced in a trust-focused prompt",
+            description=f"{trusted_prompt_competitors[0]} appeared alongside {brand} in trust-focused evidence.",
+        )
+        secondary_recommendation = Recommendation(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            priority="medium",
+            title="Clarify competitive differentiation",
+            description="Add comparison-ready proof that distinguishes the brand from surfaced competitors.",
+        )
+    else:
+        secondary_finding = Finding(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            severity="low",
+            category="citation_gap",
+            title="Visibility relies on limited supporting proof",
+            description="The brand appears, but the simulated evidence contains few independent proof signals.",
+        )
+        secondary_recommendation = Recommendation(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            priority="low",
+            title="Expand third-party proof and citations",
+            description="Earn and reference credible independent sources that support key brand claims.",
+        )
+
+    finding_rows = [
+        Finding(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            severity="high",
+            category="ai_visibility",
+            title="Brand missing from a high-intent prompt",
+            description=f"{brand} was absent while a competitor was mentioned.",
+        ),
+        secondary_finding,
+    ]
+    recommendation_rows = [
+        Recommendation(
+            org_id=audit.org_id,
+            audit_id=audit.id,
+            priority="high",
+            title="Publish comparison-led content",
+            description="Target high-intent category prompts with clear claims, FAQs, and third-party evidence.",
+        ),
+        secondary_recommendation,
+    ]
+    return page_rows, prompt_rows, finding_rows, recommendation_rows
+
+
+def refresh_completed_simulated_audit(audit: Audit) -> int:
+    """Refresh legacy simulated output in place without changing row IDs or statuses."""
+    if audit.status != AuditStatus.completed:
+        raise ValueError("Only completed simulated audits can be refreshed")
+
+    generated = build_simulated_evidence(audit)
+    if (
+        len(audit.pages) != len(generated[0])
+        or len(audit.prompts) != len(generated[1])
+        or len(audit.findings) != len(generated[2])
+        or len(audit.recommendations) != len(generated[3])
+    ):
+        raise ValueError(f"Audit {audit.id} does not have the expected simulated output shape")
+
+    existing_pages = sorted(audit.pages, key=lambda row: row.url)
+    generated_pages = sorted(generated[0], key=lambda row: row.url)
+    for page_row, page_expected in zip(existing_pages, generated_pages, strict=True):
+        page_row.url = page_expected.url
+        page_row.title = page_expected.title
+        page_row.status_code = page_expected.status_code
+
+    existing_prompts = sorted(audit.prompts, key=lambda row: row.prompt)
+    generated_prompts = sorted(generated[1], key=lambda row: row.prompt)
+    for prompt_row, prompt_expected in zip(existing_prompts, generated_prompts, strict=True):
+        prompt_row.prompt = prompt_expected.prompt
+        prompt_row.mentioned_brand = prompt_expected.mentioned_brand
+        prompt_row.competitors_mentioned = prompt_expected.competitors_mentioned
+        prompt_row.source = prompt_expected.source
+
+    existing_findings = sorted(
+        audit.findings,
+        key=lambda row: (
+            row.title != "Brand missing from a high-intent prompt",
+            row.created_at,
+            row.id,
+        ),
+    )
+    for finding_row, finding_expected in zip(existing_findings, generated[2], strict=True):
+        finding_row.severity = finding_expected.severity
+        finding_row.category = finding_expected.category
+        finding_row.title = finding_expected.title
+        finding_row.description = finding_expected.description
+
+    existing_recommendations = sorted(
+        audit.recommendations,
+        key=lambda row: (row.title != "Publish comparison-led content", row.created_at, row.id),
+    )
+    for recommendation_row, recommendation_expected in zip(
+        existing_recommendations, generated[3], strict=True
+    ):
+        recommendation_row.priority = recommendation_expected.priority
+        recommendation_row.title = recommendation_expected.title
+        recommendation_row.description = recommendation_expected.description
+
+    completion_events = sorted(
+        (row for row in audit.events if row.event_type == AuditEventType.audit_completed),
+        key=lambda row: (row.created_at, row.id),
+    )
+    historical_updated_at = (
+        completion_events[-1].created_at if completion_events else audit.updated_at
+    )
+
+    event_updates = (
+        (
+            AuditEventType.finding_created,
+            [f"Finding created: {row.title}" for row in generated[2]],
+        ),
+        (
+            AuditEventType.recommendation_created,
+            [f"Recommendation created: {row.title}" for row in generated[3]],
+        ),
+    )
+    for event_type, messages in event_updates:
+        event_rows = sorted(
+            (row for row in audit.events if row.event_type == event_type),
+            key=lambda row: (row.created_at, row.id),
+        )
+        if len(event_rows) != len(messages):
+            raise ValueError(f"Audit {audit.id} does not have the expected event shape")
+        for event_row, message in zip(event_rows, messages, strict=True):
+            event_row.message = message
+
+    audit.visibility_score = calculate_visibility_score(generated[0], generated[1])
+    audit.updated_at = historical_updated_at
+    flag_modified(audit, "updated_at")
+    if completion_events:
+        completion_events[-1].message = f"Audit completed with score {audit.visibility_score}"
+    return audit.visibility_score
 
 
 def event(db: Session, audit: Audit, event_type: AuditEventType, message: str) -> None:
@@ -288,77 +542,7 @@ def process_claimed_audit(audit_id: str, worker_id: str) -> None:
             db.commit()
             return
 
-        domain = audit.project.domain
-        brand = audit.project.name
-        competitors = audit.project.competitors
-        page_rows = [
-            AuditPage(
-                org_id=audit.org_id,
-                audit_id=audit.id,
-                url=f"https://{domain}/",
-                title=f"{brand} - Official site",
-                status_code=200,
-            ),
-            AuditPage(
-                org_id=audit.org_id,
-                audit_id=audit.id,
-                url=f"https://{domain}/products",
-                title="Products",
-                status_code=200,
-            ),
-        ]
-        prompt_rows = [
-            AuditPrompt(
-                org_id=audit.org_id,
-                audit_id=audit.id,
-                prompt=f"best {brand.lower()} alternatives",
-                mentioned_brand=False,
-                competitors_mentioned=competitors[:1],
-                source="simulated_ai_search",
-            ),
-            AuditPrompt(
-                org_id=audit.org_id,
-                audit_id=audit.id,
-                prompt=f"is {brand.lower()} a trusted brand",
-                mentioned_brand=True,
-                competitors_mentioned=competitors[1:2],
-                source="simulated_ai_search",
-            ),
-        ]
-        finding_rows = [
-            Finding(
-                org_id=audit.org_id,
-                audit_id=audit.id,
-                severity="high",
-                category="ai_visibility",
-                title="Brand missing from a high-intent prompt",
-                description=f"{brand} was absent while a competitor was mentioned.",
-            ),
-            Finding(
-                org_id=audit.org_id,
-                audit_id=audit.id,
-                severity="medium",
-                category="technical_seo",
-                title="Product page title lacks context",
-                description="The product page title does not communicate audience or differentiation.",
-            ),
-        ]
-        recommendation_rows = [
-            Recommendation(
-                org_id=audit.org_id,
-                audit_id=audit.id,
-                priority="high",
-                title="Publish comparison-led content",
-                description="Target high-intent category prompts with clear claims, FAQs, and third-party evidence.",
-            ),
-            Recommendation(
-                org_id=audit.org_id,
-                audit_id=audit.id,
-                priority="medium",
-                title="Improve product metadata",
-                description="Add category, audience, and differentiators to product page metadata.",
-            ),
-        ]
+        page_rows, prompt_rows, finding_rows, recommendation_rows = build_simulated_evidence(audit)
         db.add_all(page_rows)
         db.add_all(prompt_rows)
         db.add_all(finding_rows)
@@ -376,7 +560,7 @@ def process_claimed_audit(audit_id: str, worker_id: str) -> None:
                 AuditEventType.recommendation_created,
                 f"Recommendation created: {recommendation.title}",
             )
-        audit.visibility_score = 68 if competitors else 74
+        audit.visibility_score = calculate_visibility_score(page_rows, prompt_rows)
         audit.error_message = None
         audit.locked_at = None
         audit.worker_id = None
