@@ -200,4 +200,4 @@ Before accepting production traffic, run migrations as a separate administrative
 ## Project notes
 
 - **External services:** No paid AI, search, or crawling services are required.
-- **Approximate time spent:** About 8 hours across requirements review, implementation, UI/UX polish, tests, and enterprise hardening.
+- **Approximate time spent:** About 10 hours across requirements review, implementation, UI/UX polish, tests, and enterprise hardening.
