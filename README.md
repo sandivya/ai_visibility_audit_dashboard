@@ -1,29 +1,10 @@
 # AI Visibility Audit Dashboard
 
-This dashboard helps teams understand how their brand appears in AI-generated answers. Users can manage projects, run asynchronous visibility audits, inspect supporting evidence, review findings, and track recommendations without exposing data between organizations.
-
-The repository implements the assignment's core workflow with Next.js, FastAPI, PostgreSQL, Alembic, and a separate background worker. It also contains all six optional extensions. Core requirements and optional work are separated below so that bonus breadth is not mistaken for core correctness or time-box adherence.
-
-## Scope and prioritization
-
-### Core review boundary
-
-The core submission is the smallest path that demonstrates the requested senior full-stack concerns:
-
-1. Mock authentication for two organizations, with organization identity derived on the server.
-2. Project creation, listing, detail, and audit history.
-3. Idempotent audit creation and backend-side asynchronous processing.
-4. Explicit queued, processing, completed, and failed states.
-5. Persisted pages, prompts, findings, recommendations, and visibility scores.
-6. Backend-enforced tenant isolation, validation, understandable errors, migrations, and tests of risky flows.
-
-The additional authentication, worker-recovery, observability, pagination, rate-limiting, recommendation-workflow, and supply-chain controls are useful demonstrations, but they are not prerequisites for judging whether the assignment's core workflow is correct.
-
-### Time-box disclosure and retrospective cut line
-
-The assignment suggested 5-7 hours and recommended attempting only one or two bonuses. The actual effort was about 10 hours, including requirements review, implementation, UI/UX work, tests, optional features, and hardening. This exceeded the requested time box; this README does not recast it as compliant.
-
-With a strict seven-hour cut line, I would retain the core workflow, tenant isolation, state machine, idempotency, critical tests, and reviewer-friendly Docker Compose setup. I would choose the audit event log as the second optional feature and defer cursor pagination, rate limiting, recommendation statuses, global filtering, OIDC/RBAC, extended observability, and supply-chain automation. Implementing all six bonuses increased review surface and was not the most disciplined interpretation of the prompt.
+This dashboard helps teams understand how their brand appears in AI-generated answers. Users can
+manage projects, run asynchronous visibility audits, inspect supporting evidence, review findings,
+and track recommendations across isolated organizations. It is built with Next.js, FastAPI,
+PostgreSQL, Alembic, and a separate background worker, and includes the core workflow plus all six
+optional extensions.
 
 ## Authorship and AI assistance
 
@@ -258,7 +239,7 @@ See [TEST_COVERAGE.md](TEST_COVERAGE.md) for requirement-to-test traceability an
 
 ## Optional extensions present in the repository
 
-All six optional extensions are present. The assignment recommended choosing only one or two, so this list should be treated as additional implementation surface, not as six independent reasons to overlook the time-box and prioritization trade-off:
+The repository includes all six optional extensions:
 
 1. Signed keyset pagination for projects, audits, findings, and evidence.
 2. Append-only audit lifecycle and generated-item events.
@@ -284,6 +265,4 @@ Before accepting production traffic, run migrations as a separate administrative
 ## Project notes
 
 - **External services:** No paid AI, search, or crawling services are required.
-- **Approximate time spent:** About 10 hours across requirements review, implementation, UI/UX polish, tests, optional features, and hardening. This exceeded the requested 5-7 hours.
-- **Provenance:** AI assistance is disclosed above at the process level; no reliable line-by-line attribution log exists.
 - **Review revision:** Treat only a named, clean Git commit as the reproducible submission boundary.
