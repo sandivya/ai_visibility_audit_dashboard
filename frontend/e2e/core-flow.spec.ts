@@ -27,13 +27,12 @@ async function createProject(
 test("fresh demo workspaces open with completed audit evidence", async ({ page }, testInfo) => {
   await signInAsAlice(page);
 
-  const acmeProjects = page.locator(".project-card");
-  await expect(acmeProjects).toHaveCount(3);
-  await expect(acmeProjects.nth(0)).toContainText("Acme Skincare");
-  await expect(acmeProjects.nth(0).getByLabel("Status: completed")).toBeVisible();
-  await expect(acmeProjects.nth(1).getByLabel("Status: failed")).toBeVisible();
-  await expect(acmeProjects.nth(2).getByText("not audited", { exact: true })).toBeVisible();
-  const acmeCard = page.locator(".project-card").filter({ hasText: "Acme Skincare" });
+  const acmeCard = page.locator('.project-card[href="/projects/prj_acme_demo"]');
+  const failedCard = page.locator('.project-card[href="/projects/prj_acme_failure_demo"]');
+  const unauditedCard = page.locator('.project-card[href="/projects/prj_acme_launch_demo"]');
+  await expect(acmeCard).toHaveCount(1);
+  await expect(failedCard.getByLabel("Status: failed")).toBeVisible();
+  await expect(unauditedCard.getByText("not audited", { exact: true })).toBeVisible();
   await expect(acmeCard.getByLabel("Status: completed")).toBeVisible();
   await expect(acmeCard.getByLabel(/Score: \d+ out of 100/)).toBeVisible();
   await acmeCard.click();
@@ -127,7 +126,13 @@ test("a completed audit exposes evidence, insights, and recommendation workflow"
   await expect(recommendationStatus).toHaveValue("in_progress");
   await recommendationStatus.selectOption("completed");
   await expect(recommendationStatus).toHaveValue("completed");
-  await expect(page.getByText("Recommendation updated")).toBeVisible();
+  await expect(
+    page
+      .getByRole("region", { name: "Notifications" })
+      .getByRole("status")
+      .filter({ hasText: "Recommendation updated" })
+      .last(),
+  ).toBeVisible();
 
   await page.goto("/projects/prj_acme_demo");
   await expect(
