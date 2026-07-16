@@ -42,7 +42,7 @@ def database():
     else:
         Base.metadata.drop_all(engine)
         Base.metadata.create_all(engine)
-    seed()
+    seed(include_demo_audits=False)
     yield
     if engine.dialect.name != "postgresql":
         Base.metadata.drop_all(engine)

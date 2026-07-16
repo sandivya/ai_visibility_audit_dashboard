@@ -24,6 +24,40 @@ async function createProject(
   await expect(page.getByRole("heading", { name: input.name })).toBeVisible();
 }
 
+test("fresh demo workspaces open with completed audit evidence", async ({ page }, testInfo) => {
+  await signInAsAlice(page);
+
+  const acmeCard = page.locator(".project-card").filter({ hasText: "Acme Skincare" });
+  await expect(acmeCard.getByLabel("Status: completed")).toBeVisible();
+  await expect(acmeCard.getByLabel(/Score: \d+ out of 100/)).toBeVisible();
+  await acmeCard.click();
+  await expect(
+    page.getByText("Latest status").locator("..").getByLabel("Status: completed"),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Latest findings" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Latest recommendations" })).toBeVisible();
+  await page.getByRole("link", { name: /open full audit/i }).click();
+  await expect(page.getByRole("heading", { name: "Simulated demo audit" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Findings", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recommendations", exact: true })).toBeVisible();
+  await expectNoSeriousAccessibilityViolations(page);
+  await attachReviewScreenshot(page, testInfo, "seeded-acme-audit");
+
+  await page.getByLabel("Viewing workspace").selectOption("usr_bob");
+  await expect(page).toHaveURL(/\/$/);
+  const betaCard = page.locator(".project-card").filter({ hasText: "Beta Finance" });
+  await expect(betaCard.getByLabel("Status: completed")).toBeVisible();
+  await expect(betaCard.getByLabel(/Score: \d+ out of 100/)).toBeVisible();
+  await betaCard.click();
+  await expect(
+    page.getByText("Latest status").locator("..").getByLabel("Status: completed"),
+  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Latest findings" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Latest recommendations" })).toBeVisible();
+  await expectNoSeriousAccessibilityViolations(page);
+  await attachReviewScreenshot(page, testInfo, "seeded-beta-project");
+});
+
 test("an evaluator can validate, create, and open a project", async ({ page }, testInfo) => {
   await signInAsAlice(page);
   await page.getByRole("button", { name: /new project/i }).click();

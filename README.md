@@ -60,7 +60,9 @@ Open:
 - API readiness: `http://localhost:8000/api/health/ready`
 - Prometheus metrics: `http://localhost:8000/metrics`
 
-Compose creates restricted database roles, applies migrations, seeds demonstration data, and starts PostgreSQL, the API, worker, and frontend. To stop the application:
+Compose creates restricted database roles, applies migrations, seeds two evidence-backed completed
+demo audits, and starts PostgreSQL, the API, worker, and frontend. Seeding is idempotent: restarting
+the stack does not duplicate audits or reset recommendation progress. To stop the application:
 
 ```bash
 docker compose down
@@ -71,9 +73,10 @@ docker compose down
 ## Demo walkthrough
 
 1. Open the dashboard and sign in as `alice@acme.com`.
-2. Review the seeded project or create one using a valid root domain and optional competitors.
-3. Start an audit and watch it move from `queued` to `processing` and then a terminal state.
-4. Review the score, prompt and page evidence, findings, recommendations, and event timeline.
+2. Open the seeded completed audit to review its score, prompt and page evidence, findings,
+   recommendations, and event timeline immediately.
+3. Start another audit to watch it move from `queued` to `processing` and then a terminal state.
+4. Create a project using a valid root domain and optional competitors to exercise the empty state.
 5. Use the global findings page to filter by severity, category, project, and audit.
 6. Switch to `bob@beta.com` to confirm that each organization sees only its own data.
 
