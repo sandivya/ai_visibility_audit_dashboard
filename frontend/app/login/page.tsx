@@ -37,9 +37,7 @@ export default function LoginPage() {
           <span className="brand-mark" aria-hidden="true">
             V
           </span>
-          <span>
-            Visibility<span>Stack</span>
-          </span>
+          <span>AI Visibility</span>
         </div>
         <p className="eyebrow">Secure demo access</p>
         <h1 id="login-title">Choose a test workspace</h1>

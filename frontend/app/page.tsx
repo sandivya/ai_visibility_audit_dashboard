@@ -3,7 +3,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LoadMoreButton } from "@/components/load-more-button";
 import { ErrorBox, Score, Shell, Status } from "@/components/shell";
 import { ProjectsSkeleton } from "@/components/skeletons";
@@ -46,6 +46,14 @@ export default function ProjectsPage() {
       router.push(`/projects/${project.id}`);
     },
   });
+
+  useEffect(() => {
+    const params = new URLSearchParams(globalThis.location.search);
+    if (params.get("create") !== "1") return;
+    const openDialog = globalThis.setTimeout(() => setDialogOpen(true), 0);
+    router.replace("/", { scroll: false });
+    return () => globalThis.clearTimeout(openDialog);
+  }, [router]);
 
   function createProject(draft: ProjectDraft) {
     create.mutate(draft);

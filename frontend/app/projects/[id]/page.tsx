@@ -9,6 +9,7 @@ import { ErrorBox, Score, Shell, Status } from "@/components/shell";
 import { AuditHistorySkeleton, ProjectDetailSkeleton } from "@/components/skeletons";
 import { useToast } from "@/components/toast";
 import { useAuditStatus, useStartAudit } from "@/features/audits/hooks";
+import { auditEvidenceAnchor } from "@/features/audits/view-model";
 import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
 import { usePageTitle } from "@/lib/use-page-title";
@@ -151,6 +152,22 @@ export default function ProjectPage() {
               </div>
             </div>
 
+            {latestSummary && (
+              <aside
+                className="methodology-panel methodology-panel-compact"
+                aria-label="Audit methodology"
+              >
+                <div className="methodology-heading">
+                  <div>
+                    <p className="eyebrow">Methodology</p>
+                    <h2>Simulated demo data</h2>
+                  </div>
+                  <span>{latestSummary.methodology.version}</span>
+                </div>
+                <p>{latestSummary.methodology.disclosure}</p>
+              </aside>
+            )}
+
             <section className="competitor-panel" aria-labelledby="tracked-competitors-title">
               <div>
                 <p className="eyebrow">Comparison set</p>
@@ -272,7 +289,7 @@ export default function ProjectPage() {
                         latest.data.findings.map((item) => (
                           <FindingCard
                             item={item}
-                            evidenceHref={`/audits/${latest.data.id}#prompt-evidence`}
+                            evidenceHref={`/audits/${latest.data.id}${auditEvidenceAnchor(item.evidence_kind)}`}
                             key={item.id}
                           />
                         ))
@@ -296,7 +313,7 @@ export default function ProjectPage() {
                             <p>{item.description}</p>
                             <Link
                               className="card-action"
-                              href={`/audits/${latest.data.id}#recommendations`}
+                              href={`/audits/${latest.data.id}#recommendation-${item.id}`}
                             >
                               Open action workflow
                             </Link>

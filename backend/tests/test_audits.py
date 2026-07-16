@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import app.services as services
 import pytest
@@ -9,6 +9,7 @@ from app.models import (
     Audit,
     AuditEvent,
     AuditEventType,
+    AuditRateAttempt,
     AuditStatus,
     Project,
     RecommendationStatus,
@@ -20,6 +21,7 @@ from app.services import (
     calculate_visibility_score,
     claim_next_audit,
     create_audit,
+    process_claimed_audit,
     refresh_completed_simulated_audit,
     run_worker_once,
     transition,
@@ -53,6 +55,66 @@ def test_audit_completes_with_evidence(client: TestClient, alice_headers: dict[s
     assert detail["events"][0]["event_type"] == "audit_created"
     assert detail["events"][-1]["event_type"] == "audit_completed"
     assert sum(event["event_type"] == "page_analyzed" for event in detail["events"]) == 2
+    assert detail["methodology"]["mode"] == "simulated"
+    assert detail["methodology"]["version"] == "simulated-v2"
+    assert "no live AI provider" in detail["methodology"]["disclosure"]
+    findings_by_id = {finding["id"]: finding for finding in detail["findings"]}
+    for recommendation in detail["recommendations"]:
+        related = findings_by_id[recommendation["related_finding_id"]]
+        assert recommendation["evidence_kind"] == related["evidence_kind"]
+        assert recommendation["related_finding_category"] == related["category"]
+
+
+def test_audit_lifecycle_status_summaries_and_output_endpoints(
+    client: TestClient, alice_headers: dict[str, str]
+) -> None:
+    created = client.post(
+        "/api/projects/prj_acme_demo/audits",
+        headers={**alice_headers, "Idempotency-Key": "complete-contract"},
+    )
+    assert created.status_code == 202
+    audit_id = created.json()["id"]
+
+    queued = client.get(f"/api/audits/{audit_id}/status", headers=alice_headers)
+    assert queued.status_code == 200
+    assert queued.json()["status"] == "queued"
+    assert queued.headers["Retry-After"] == "2"
+
+    assert claim_next_audit("contract-worker") == audit_id
+    processing = client.get(f"/api/audits/{audit_id}/status", headers=alice_headers)
+    assert processing.json()["status"] == "processing"
+    assert processing.headers["Retry-After"] == "2"
+
+    process_claimed_audit(audit_id, "contract-worker")
+    completed = client.get(f"/api/audits/{audit_id}/status", headers=alice_headers)
+    assert completed.json()["status"] == "completed"
+    assert "Retry-After" not in completed.headers
+
+    detail = client.get(f"/api/audits/{audit_id}", headers=alice_headers).json()
+    expected_counts = {
+        "pages": detail["page_count"],
+        "prompts": detail["prompt_count"],
+        "findings": detail["finding_count"],
+        "recommendations": detail["recommendation_count"],
+        "events": detail["event_count"],
+    }
+    for resource, expected_count in expected_counts.items():
+        response = client.get(f"/api/audits/{audit_id}/{resource}", headers=alice_headers)
+        assert response.status_code == 200, resource
+        assert len(response.json()["items"]) == expected_count, resource
+
+    project = client.get("/api/projects/prj_acme_demo", headers=alice_headers).json()
+    assert project["latest_audit"]["id"] == audit_id
+    assert project["latest_audit"]["status"] == "completed"
+    listed_project = next(
+        item
+        for item in client.get("/api/projects", headers=alice_headers).json()["items"]
+        if item["id"] == "prj_acme_demo"
+    )
+    assert listed_project["latest_audit"] == project["latest_audit"]
+
+    audits = client.get("/api/projects/prj_acme_demo/audits", headers=alice_headers).json()["items"]
+    assert audits[0]["id"] == audit_id
 
 
 def test_visibility_score_is_derived_from_evidence() -> None:
@@ -82,7 +144,7 @@ def test_visibility_score_is_derived_from_evidence() -> None:
     assert calculate_visibility_score(healthy_pages, hidden_prompts) == 45
 
 
-def test_simulated_audits_produce_coherent_run_specific_results() -> None:
+def test_simulated_audits_are_stable_for_equivalent_project_configuration() -> None:
     project = Project(
         id="prj_score_variation",
         org_id="org_beta",
@@ -90,8 +152,7 @@ def test_simulated_audits_produce_coherent_run_specific_results() -> None:
         domain="betafinance.com",
         competitors=["finwise.com", "moneybeam.com"],
     )
-    scores: set[int] = set()
-    secondary_categories: set[str] = set()
+    snapshots: list[tuple[object, ...]] = []
 
     for audit_id in (
         "aud_963f7ffc53cb44178a58",
@@ -107,15 +168,93 @@ def test_simulated_audits_produce_coherent_run_specific_results() -> None:
             project=project,
         )
         pages, prompts, findings, recommendations = build_simulated_evidence(audit)
-        scores.add(calculate_visibility_score(pages, prompts))
-        secondary_categories.add(findings[1].category)
+        snapshots.append(
+            (
+                tuple((page.url, page.title, page.status_code) for page in pages),
+                tuple(
+                    (
+                        prompt.prompt,
+                        prompt.mentioned_brand,
+                        tuple(prompt.competitors_mentioned),
+                        prompt.source,
+                    )
+                    for prompt in prompts
+                ),
+                tuple(
+                    (finding.severity, finding.category, finding.title, finding.description)
+                    for finding in findings
+                ),
+                tuple(
+                    (recommendation.priority, recommendation.title, recommendation.description)
+                    for recommendation in recommendations
+                ),
+                calculate_visibility_score(pages, prompts),
+            )
+        )
         assert len(pages) == len(prompts) == len(findings) == len(recommendations) == 2
         if pages[1].title == "Products":
             assert findings[1].category == "technical_seo"
             assert recommendations[1].title == "Improve product metadata"
 
-    assert len(scores) == 3
-    assert len(secondary_categories) >= 2
+    assert snapshots[0] == snapshots[1] == snapshots[2]
+
+    reordered_project = Project(
+        id="prj_score_reordered",
+        org_id=project.org_id,
+        name=project.name,
+        domain=project.domain,
+        competitors=list(reversed(project.competitors)),
+    )
+    reordered_audit = Audit(
+        id="aud_reordered",
+        org_id=project.org_id,
+        project_id=reordered_project.id,
+        idempotency_key="reordered",
+        status=AuditStatus.processing,
+        project=reordered_project,
+    )
+    reordered = build_simulated_evidence(reordered_audit)
+    assert tuple((row.url, row.title, row.status_code) for row in reordered[0]) == snapshots[0][0]
+    assert (
+        tuple(
+            (row.prompt, row.mentioned_brand, tuple(row.competitors_mentioned), row.source)
+            for row in reordered[1]
+        )
+        == snapshots[0][1]
+    )
+
+
+def test_simulated_evidence_changes_when_relevant_inputs_change() -> None:
+    baseline_project = Project(
+        id="prj_baseline",
+        org_id="org_acme",
+        name="Acme",
+        domain="acme.example.com",
+        competitors=["rival.example.com"],
+    )
+    changed_project = Project(
+        id="prj_changed",
+        org_id="org_acme",
+        name="Acme Plus",
+        domain="acme-plus.example.com",
+        competitors=["other.example.com"],
+    )
+
+    def evidence_for(project: Project, audit_id: str) -> tuple[object, ...]:
+        audit = Audit(
+            id=audit_id,
+            org_id=project.org_id,
+            project_id=project.id,
+            idempotency_key=audit_id,
+            status=AuditStatus.processing,
+            project=project,
+        )
+        pages, prompts, findings, recommendations = build_simulated_evidence(audit)
+        return pages[0].url, prompts[0].prompt, findings[1].title, recommendations[1].title
+
+    assert evidence_for(baseline_project, "aud_baseline") != evidence_for(
+        changed_project, "aud_changed"
+    )
 
 
 def test_simulated_audit_refresh_preserves_identity_status_and_timestamps(
@@ -177,6 +316,22 @@ def test_idempotency_returns_original_audit(
         len(client.get("/api/projects/prj_acme_demo/audits", headers=alice_headers).json()["items"])
         == 1
     )
+
+
+@pytest.mark.parametrize("key", (None, "   ", "x" * 129))
+def test_audit_requires_a_bounded_idempotency_key(
+    client: TestClient,
+    alice_headers: dict[str, str],
+    key: str | None,
+) -> None:
+    headers = dict(alice_headers)
+    if key is not None:
+        headers["Idempotency-Key"] = key
+
+    response = client.post("/api/projects/prj_acme_demo/audits", headers=headers)
+
+    assert response.status_code == 400
+    assert "Idempotency-Key" in response.json()["error"]["message"]
 
 
 def test_idempotency_key_is_scoped_to_organization_and_project(
@@ -255,6 +410,61 @@ def test_concurrent_rate_limit_is_atomic() -> None:
         settings.audit_rate_limit = original_limit
 
 
+def test_audit_creation_uses_one_database_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    database_now = datetime(2026, 7, 16, 12, 30, tzinfo=UTC)
+    calls = 0
+
+    def fixed_database_now(_db: object) -> datetime:
+        nonlocal calls
+        calls += 1
+        return database_now
+
+    monkeypatch.setattr(services, "_database_now", fixed_database_now)
+    with SessionLocal() as db:
+        project = db.scalar(select(Project).where(Project.id == "prj_acme_demo"))
+        assert project is not None
+        audit, created = create_audit(db, project, "database-clock")
+        attempt = db.scalar(
+            select(AuditRateAttempt).where(AuditRateAttempt.org_id == project.org_id)
+        )
+        assert created
+        assert attempt is not None
+
+        def aware(value: datetime) -> datetime:
+            return value if value.tzinfo else value.replace(tzinfo=UTC)
+
+        assert calls == 1
+        assert aware(audit.available_at) == database_now
+        assert aware(audit.created_at) == database_now
+        assert aware(audit.updated_at) == database_now
+        assert aware(attempt.created_at) == database_now
+
+
+def test_rate_limit_returns_consistent_error_and_retry_header(
+    client: TestClient, alice_headers: dict[str, str]
+) -> None:
+    settings = get_settings()
+    original_limit = settings.audit_rate_limit
+    settings.audit_rate_limit = 1
+    try:
+        first = client.post(
+            "/api/projects/prj_acme_demo/audits",
+            headers={**alice_headers, "Idempotency-Key": "rate-contract-1"},
+        )
+        limited = client.post(
+            "/api/projects/prj_acme_demo/audits",
+            headers={**alice_headers, "Idempotency-Key": "rate-contract-2"},
+        )
+
+        assert first.status_code == 202
+        assert limited.status_code == 429
+        assert limited.json()["error"]["code"] == "http_429"
+        assert "rate limit" in limited.json()["error"]["message"].lower()
+        assert int(limited.headers["Retry-After"]) >= 1
+    finally:
+        settings.audit_rate_limit = original_limit
+
+
 def test_cross_org_audit_is_hidden(
     client: TestClient,
     alice_headers: dict[str, str],
@@ -304,7 +514,12 @@ def test_failed_domain_is_persisted(client: TestClient, alice_headers: dict[str,
     detail = start_and_process(client, project["id"], alice_headers, "fail")
     assert detail["status"] == "failed"
     assert detail["error_message"]
+    assert detail["retryable"] is False
+    assert detail["failure_kind"] == "deterministic_demo"
     assert detail["events"][-1]["event_type"] == "audit_failed"
+    status = client.get(f"/api/audits/{detail['id']}/status", headers=alice_headers).json()
+    assert status["retryable"] is False
+    assert status["failure_kind"] == "deterministic_demo"
 
 
 def test_recommendation_status_and_finding_filters(
@@ -314,13 +529,20 @@ def test_recommendation_status_and_finding_filters(
 ) -> None:
     detail = start_and_process(client, "prj_acme_demo", alice_headers, "outputs")
     recommendation_id = detail["recommendations"][0]["id"]
-    updated = client.patch(
+    for status in ("in_progress", "completed", "dismissed", "open"):
+        updated = client.patch(
+            f"/api/recommendations/{recommendation_id}",
+            headers=alice_headers,
+            json={"status": status},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["status"] == status
+    invalid = client.patch(
         f"/api/recommendations/{recommendation_id}",
         headers=alice_headers,
-        json={"status": "in_progress"},
+        json={"status": "not-a-status"},
     )
-    assert updated.status_code == 200
-    assert updated.json()["status"] == "in_progress"
+    assert invalid.status_code == 422
     assert (
         client.patch(
             f"/api/recommendations/{recommendation_id}",
@@ -385,6 +607,8 @@ def test_worker_retries_then_persists_terminal_failure(
         assert run_worker_once("retry-worker")
         final = client.get(f"/api/audits/{created['id']}", headers=alice_headers).json()
         assert final["status"] == "failed"
+        assert final["retryable"] is True
+        assert final["failure_kind"] is None
         assert final["events"][-1]["event_type"] == "audit_failed"
     finally:
         settings.audit_max_attempts = original_attempts

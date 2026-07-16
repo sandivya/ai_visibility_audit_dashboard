@@ -50,7 +50,7 @@ x-backend-environment: &backend-environment
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
 
 x-postgres-image: &postgres-image
-  image: visibilitystack-postgres:${IMAGE_TAG:-local}
+  image: ai-visibility-audit-postgres:${IMAGE_TAG:-local}
   build:
     context: docker/postgres
     dockerfile: Dockerfile

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AuditPageEvidence, AuditPromptEvidence, Finding } from "@/lib/types";
 import {
+  auditEvidenceAnchor,
   isAuditFinalizing,
   safeEvidenceUrl,
   scoreNarrative,
@@ -8,6 +9,11 @@ import {
 } from "./view-model";
 
 describe("audit view model", () => {
+  it("routes findings to category-appropriate evidence", () => {
+    expect(auditEvidenceAnchor("pages")).toBe("#page-evidence");
+    expect(auditEvidenceAnchor("prompts")).toBe("#prompt-evidence");
+  });
+
   it("keeps a terminal transition in finalizing state until audit and evidence refresh", () => {
     const status = { status: "completed" as const, updated_at: "2026-07-13T00:01:00Z" };
 
@@ -68,6 +74,7 @@ describe("audit view model", () => {
       project_name: "Example",
       severity,
       category: "ai_visibility",
+      evidence_kind: "prompts",
       title: severity,
       description: severity,
       created_at: "2026-07-13T00:00:00Z",

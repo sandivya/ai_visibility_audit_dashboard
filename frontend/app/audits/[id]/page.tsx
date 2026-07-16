@@ -13,6 +13,7 @@ import { useToast } from "@/components/toast";
 import { useAuditEvidence, useAuditStatus, useStartAudit } from "@/features/audits/hooks";
 import { RecommendationCard } from "@/features/audits/recommendation-card";
 import {
+  auditEvidenceAnchor,
   isAuditFinalizing,
   safeEvidenceUrl,
   scoreNarrative,
@@ -223,8 +224,15 @@ export default function AuditPage() {
             {data.status === "failed" && (
               <div className="failure-panel">
                 <ErrorBox message={data.error_message ?? "Audit processing failed"} />
+                {data.failure_kind === "deterministic_demo" && (
+                  <p className="failure-guidance">
+                    This demo failure is tied to the project inputs. Running the unchanged project
+                    again would repeat the same result; create a project with a corrected domain
+                    instead.
+                  </p>
+                )}
                 <div className="failure-actions">
-                  {canWrite && (
+                  {canWrite && data.retryable && (
                     <button
                       type="button"
                       onClick={() => retryAudit.mutate()}
@@ -234,12 +242,29 @@ export default function AuditPage() {
                       {retryAudit.isPending ? "Starting replacement…" : "Retry audit"}
                     </button>
                   )}
+                  {canWrite && !data.retryable && (
+                    <Link className="button-link" href="/?create=1">
+                      Create corrected project
+                    </Link>
+                  )}
                   <Link className="button-link secondary" href={`/projects/${data.project_id}`}>
                     Return to project
                   </Link>
                 </div>
               </div>
             )}
+
+            <aside className="methodology-panel" aria-labelledby="audit-methodology-title">
+              <div className="methodology-heading">
+                <div>
+                  <p className="eyebrow">Methodology</p>
+                  <h2 id="audit-methodology-title">Simulated demo audit</h2>
+                </div>
+                <span>{data.methodology.version}</span>
+              </div>
+              <p>{data.methodology.disclosure}</p>
+              <p className="methodology-score">{data.methodology.scoring_summary}</p>
+            </aside>
 
             <nav className="audit-jump-nav" aria-label="Audit result sections">
               <span>Jump to</span>
@@ -367,7 +392,11 @@ export default function AuditPage() {
                   </Link>
                 </div>
                 {findingRows.map((item) => (
-                  <FindingCard item={item} evidenceHref="#prompt-evidence" key={item.id} />
+                  <FindingCard
+                    item={item}
+                    evidenceHref={auditEvidenceAnchor(item.evidence_kind)}
+                    key={item.id}
+                  />
                 ))}
                 {findingRows.length === 0 && !findings.error && (
                   <div className="section-empty">
@@ -406,7 +435,11 @@ export default function AuditPage() {
                     item={item}
                     index={index}
                     canWrite={canWrite}
-                    evidenceHref="#findings"
+                    evidenceHref={
+                      item.related_finding_id
+                        ? `#finding-${item.related_finding_id}`
+                        : auditEvidenceAnchor(item.evidence_kind)
+                    }
                     key={item.id}
                   />
                 ))}
@@ -482,7 +515,7 @@ export default function AuditPage() {
                       <strong>{prompt.prompt}</strong>
                       <p>
                         {prompt.mentioned_brand ? "Brand mentioned" : "Brand absent"} ·{" "}
-                        {prompt.source}
+                        {prompt.source.replaceAll("_", " ")}
                       </p>
                       <div className="competitor-mentions">
                         <span>

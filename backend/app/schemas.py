@@ -1,8 +1,16 @@
 import re
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.methodology import (
+    SIMULATED_AUDIT_DISCLOSURE,
+    SIMULATED_AUDIT_METHODOLOGY_VERSION,
+    SIMULATED_AUDIT_SCORING_SUMMARY,
+    SIMULATED_AUDIT_STABLE_INPUTS,
+    EvidenceKind,
+)
 from app.models import AuditEventType, AuditStatus, RecommendationStatus, UserRole
 
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
@@ -26,7 +34,17 @@ class SessionCreate(BaseModel):
     user_id: str = Field(min_length=1, max_length=32)
 
 
+class AuditMethodologyOut(BaseModel):
+    mode: Literal["simulated"] = "simulated"
+    version: str = SIMULATED_AUDIT_METHODOLOGY_VERSION
+    disclosure: str = SIMULATED_AUDIT_DISCLOSURE
+    scoring_summary: str = SIMULATED_AUDIT_SCORING_SUMMARY
+    stable_inputs: tuple[str, ...] = SIMULATED_AUDIT_STABLE_INPUTS
+
+
 class ProjectCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=120)
     domain: str
     competitors: list[str] = Field(default_factory=list, max_length=10)
@@ -68,6 +86,7 @@ class AuditSummary(BaseModel):
     visibility_score: int | None
     created_at: datetime
     updated_at: datetime
+    methodology: AuditMethodologyOut = Field(default_factory=AuditMethodologyOut)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -130,6 +149,7 @@ class FindingOut(BaseModel):
     project_name: str
     severity: str
     category: str
+    evidence_kind: EvidenceKind
     title: str
     description: str
     created_at: datetime
@@ -148,6 +168,9 @@ class RecommendationOut(BaseModel):
     title: str
     description: str
     status: RecommendationStatus
+    evidence_kind: EvidenceKind
+    related_finding_id: str | None = None
+    related_finding_category: str | None = None
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
@@ -181,7 +204,10 @@ class AuditStatusOut(BaseModel):
     status: AuditStatus
     visibility_score: int | None
     error_message: str | None
+    retryable: bool = False
+    failure_kind: Literal["deterministic_demo"] | None = None
     updated_at: datetime
+    methodology: AuditMethodologyOut = Field(default_factory=AuditMethodologyOut)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -192,8 +218,11 @@ class AuditOut(BaseModel):
     status: AuditStatus
     visibility_score: int | None
     error_message: str | None
+    retryable: bool = False
+    failure_kind: Literal["deterministic_demo"] | None = None
     created_at: datetime
     updated_at: datetime
+    methodology: AuditMethodologyOut = Field(default_factory=AuditMethodologyOut)
     pages: list[AuditPageOut] = Field(default_factory=list)
     prompts: list[AuditPromptOut] = Field(default_factory=list)
     findings: list[FindingOut] = Field(default_factory=list)

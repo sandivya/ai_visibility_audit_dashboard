@@ -1,4 +1,4 @@
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Response
 from sqlalchemy import and_, func, or_, select
@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.models import Audit, AuditEvent, AuditPrompt, Finding, Recommendation
 from app.models import AuditPage as AuditPageModel
 from app.pagination import cursor_scope, encode_cursor
-from app.routers.common import cursor_values, finding_out, get_owned_audit
+from app.routers.common import cursor_values, finding_out, get_owned_audit, recommendation_out
 from app.schemas import (
     AnalyzedPagePage,
     AuditOut,
@@ -21,6 +21,23 @@ from app.schemas import (
 
 router = APIRouter()
 settings = get_settings()
+
+
+def _failure_kind(audit: Audit) -> Literal["deterministic_demo"] | None:
+    if audit.status.value == "failed" and "fail" in audit.project.domain:
+        return "deterministic_demo"
+    return None
+
+
+def _retryable(audit: Audit) -> bool:
+    return audit.status.value == "failed" and _failure_kind(audit) is None
+
+
+def _findings_by_title(db: Db, *, org_id: str, audit_id: str) -> dict[str, Finding]:
+    rows = db.scalars(
+        select(Finding).where(Finding.org_id == org_id, Finding.audit_id == audit_id)
+    ).all()
+    return {finding.title: finding for finding in rows}
 
 
 def _evidence_rows(
@@ -105,6 +122,7 @@ def get_audit(
             cursor=None,
             scope=_evidence_scope(user.org_id, audit.id, kind),
         )
+    findings_by_title = _findings_by_title(db, org_id=user.org_id, audit_id=audit.id)
     collections["findings"] = (
         [
             finding_out(
@@ -116,6 +134,16 @@ def get_audit(
         ],
         collections["findings"][1],
     )
+    collections["recommendations"] = (
+        [
+            recommendation_out(
+                recommendation,
+                findings_by_title=findings_by_title,
+            )
+            for recommendation in collections["recommendations"][0]
+        ],
+        collections["recommendations"][1],
+    )
     counts = _evidence_counts(db, user.org_id, audit.id)
     return AuditOut(
         id=audit.id,
@@ -123,6 +151,8 @@ def get_audit(
         status=audit.status,
         visibility_score=audit.visibility_score,
         error_message=audit.error_message,
+        retryable=_retryable(audit),
+        failure_kind=_failure_kind(audit),
         created_at=audit.created_at,
         updated_at=audit.updated_at,
         pages=collections["pages"][0],
@@ -144,11 +174,22 @@ def get_audit(
 
 
 @router.get("/audits/{audit_id}/status", response_model=AuditStatusOut)
-def get_audit_status(audit_id: str, response: Response, db: Db, user: CurrentUser) -> Audit:
-    audit = get_owned_audit(db, user.org_id, audit_id)
+def get_audit_status(
+    audit_id: str, response: Response, db: Db, user: CurrentUser
+) -> AuditStatusOut:
+    audit = get_owned_audit(db, user.org_id, audit_id, include_project=True)
     if audit.status.value in {"queued", "processing"}:
         response.headers["Retry-After"] = "2"
-    return audit
+    return AuditStatusOut(
+        id=audit.id,
+        project_id=audit.project_id,
+        status=audit.status,
+        visibility_score=audit.visibility_score,
+        error_message=audit.error_message,
+        retryable=_retryable(audit),
+        failure_kind=_failure_kind(audit),
+        updated_at=audit.updated_at,
+    )
 
 
 @router.get("/audits/{audit_id}/pages", response_model=AnalyzedPagePage)
@@ -250,7 +291,11 @@ def list_audit_recommendations(
         cursor=cursor,
         scope=_evidence_scope(user.org_id, audit_id, "recommendations"),
     )
-    return RecommendationPage(items=items, next_cursor=next_cursor)
+    findings_by_title = _findings_by_title(db, org_id=user.org_id, audit_id=audit_id)
+    return RecommendationPage(
+        items=[recommendation_out(item, findings_by_title=findings_by_title) for item in items],
+        next_cursor=next_cursor,
+    )
 
 
 @router.get("/audits/{audit_id}/events", response_model=EventPage)

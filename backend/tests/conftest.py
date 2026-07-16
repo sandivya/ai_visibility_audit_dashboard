@@ -13,18 +13,39 @@ from app.config import get_settings
 from app.database import Base, SessionLocal, engine
 from app.main import app
 from app.models import User
+from app.schema_health import verify_database_readiness
 from app.seed import seed
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text
+
+
+def _reset_migrated_postgres_data() -> None:
+    """Clear test rows without replacing the Alembic-managed schema or its RLS policies."""
+    quote = engine.dialect.identifier_preparer.quote
+    tables = ", ".join(quote(table.name) for table in Base.metadata.sorted_tables)
+    with engine.begin() as connection:
+        connection.execute(text(f"TRUNCATE TABLE {tables} RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def migrated_database_schema() -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    with SessionLocal() as db:
+        verify_database_readiness(db, get_settings())
 
 
 @pytest.fixture(autouse=True)
 def database():
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    if engine.dialect.name == "postgresql":
+        _reset_migrated_postgres_data()
+    else:
+        Base.metadata.drop_all(engine)
+        Base.metadata.create_all(engine)
     seed()
     yield
-    Base.metadata.drop_all(engine)
+    if engine.dialect.name != "postgresql":
+        Base.metadata.drop_all(engine)
 
 
 @pytest.fixture

@@ -11,9 +11,7 @@ export default function NotFound() {
           <span className="brand-mark" aria-hidden="true">
             V
           </span>
-          <span>
-            Visibility<span>Stack</span>
-          </span>
+          <span>AI Visibility</span>
         </div>
         <p className="eyebrow">404 · Not found</p>
         <h1 id="not-found-title">This view isn’t available</h1>

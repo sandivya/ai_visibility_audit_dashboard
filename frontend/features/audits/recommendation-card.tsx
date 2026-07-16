@@ -29,9 +29,10 @@ export function RecommendationCard({
   const update = useUpdateRecommendation(auditId);
   const { showToast } = useToast();
   const saveStateId = `recommendation-save-${item.id}`;
+  const statusControlId = `recommendation-status-${item.id}`;
 
   return (
-    <article className="result-card recommendation">
+    <article className="result-card recommendation" id={`recommendation-${item.id}`}>
       <div className="number" aria-hidden="true">
         {String(index + 1).padStart(2, "0")}
       </div>
@@ -39,11 +40,11 @@ export function RecommendationCard({
         <div className="recommendation-toolbar">
           <span className={`tag ${item.priority}`}>{item.priority} priority</span>
           <div className="recommendation-control">
-            <label className="sr-only" htmlFor={`recommendation-${item.id}`}>
+            <label className="sr-only" htmlFor={statusControlId}>
               Status for {item.title}
             </label>
             <select
-              id={`recommendation-${item.id}`}
+              id={statusControlId}
               value={item.status}
               disabled={!canWrite || update.isPending}
               aria-describedby={

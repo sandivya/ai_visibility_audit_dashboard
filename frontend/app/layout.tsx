@@ -5,8 +5,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "AI visibility operations | VisibilityStack",
-    template: "%s | VisibilityStack",
+    default: "AI Visibility Audit Dashboard",
+    template: "%s | AI Visibility Audit",
   },
   description: "Evidence-backed AI visibility audits",
   icons: { icon: "/icon.svg" },

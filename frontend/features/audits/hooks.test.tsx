@@ -9,12 +9,21 @@ import { queryKeys } from "@/lib/query-keys";
 import type { Audit, AuditSummary, CursorPage, Recommendation } from "@/lib/types";
 import { useAuditEvidence, useAuditStatus, useStartAudit, useUpdateRecommendation } from "./hooks";
 
+const methodology = {
+  mode: "simulated" as const,
+  version: "simulated-v2",
+  disclosure: "Demo data only.",
+  scoring_summary: "Deterministic score.",
+  stable_inputs: ["brand", "domain", "competitor set"],
+};
+
 const auditSummary: AuditSummary = {
   id: "aud_test",
   status: "queued",
   visibility_score: null,
   created_at: "2026-07-13T00:00:00Z",
   updated_at: "2026-07-13T00:00:00Z",
+  methodology,
 };
 
 function testClient() {
@@ -34,6 +43,33 @@ afterEach(() => {
 });
 
 describe("audit query hooks", () => {
+  it("fetches every audit evidence collection", async () => {
+    const client = testClient();
+    const emptyPage = { items: [], next_cursor: null };
+    const spies = [
+      vi.spyOn(api, "auditPages").mockResolvedValue(emptyPage),
+      vi.spyOn(api, "auditPrompts").mockResolvedValue(emptyPage),
+      vi.spyOn(api, "auditFindings").mockResolvedValue(emptyPage),
+      vi.spyOn(api, "auditRecommendations").mockResolvedValue(emptyPage),
+      vi.spyOn(api, "auditEvents").mockResolvedValue(emptyPage),
+    ];
+    const { result } = renderHook(
+      () => ({
+        pages: useAuditEvidence("aud_test", "pages"),
+        prompts: useAuditEvidence("aud_test", "prompts"),
+        findings: useAuditEvidence("aud_test", "findings"),
+        recommendations: useAuditEvidence("aud_test", "recommendations"),
+        events: useAuditEvidence("aud_test", "events"),
+      }),
+      { wrapper: wrapper(client) },
+    );
+
+    await waitFor(() =>
+      expect(Object.values(result.current).every((query) => query.isSuccess)).toBe(true),
+    );
+    for (const spy of spies) expect(spy).toHaveBeenCalledOnce();
+  });
+
   it("hydrates the first evidence page without an immediate duplicate request", async () => {
     const client = testClient();
     const fetchPages = vi.spyOn(api, "auditPages");
@@ -102,6 +138,9 @@ describe("audit query hooks", () => {
       title: "Improve citations",
       description: "Add authoritative supporting sources.",
       status: "open",
+      evidence_kind: "prompts",
+      related_finding_id: null,
+      related_finding_category: null,
       created_at: "2026-07-13T00:00:00Z",
       updated_at: "2026-07-13T00:00:00Z",
     };
@@ -109,6 +148,8 @@ describe("audit query hooks", () => {
       ...auditSummary,
       project_id: "prj_test",
       error_message: null,
+      retryable: false,
+      failure_kind: null,
       pages: [],
       prompts: [],
       findings: [],
@@ -167,6 +208,8 @@ describe("audit query hooks", () => {
       status: "completed",
       visibility_score: 82,
       error_message: null,
+      retryable: false,
+      failure_kind: null,
       updated_at: "2026-07-13T00:01:00Z",
     });
     const invalidate = vi.spyOn(client, "invalidateQueries");
@@ -195,6 +238,8 @@ describe("audit query hooks", () => {
       status: "completed" as const,
       visibility_score: 82,
       error_message: null,
+      retryable: false,
+      failure_kind: null,
       updated_at: "2026-07-13T00:01:00Z",
     };
     vi.spyOn(api, "auditStatus").mockResolvedValue(terminal);
@@ -206,5 +251,61 @@ describe("audit query hooks", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("waits for the detail snapshot before invalidating a direct terminal status", async () => {
+    const client = testClient();
+    vi.spyOn(api, "auditStatus").mockResolvedValue({
+      id: "aud_test",
+      project_id: "prj_test",
+      status: "completed",
+      visibility_score: 82,
+      error_message: null,
+      retryable: false,
+      failure_kind: null,
+      updated_at: "2026-07-13T00:01:00Z",
+    });
+    const invalidate = vi.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useAuditStatus("aud_test"), {
+      wrapper: wrapper(client),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it("handles recommendation failures without cached context and applies server success", async () => {
+    const client = testClient();
+    const updated: Recommendation = {
+      id: "rec_test",
+      audit_id: "aud_test",
+      priority: "high",
+      title: "Improve citations",
+      description: "Add authoritative supporting sources.",
+      status: "completed",
+      evidence_kind: "prompts",
+      related_finding_id: null,
+      related_finding_category: null,
+      created_at: "2026-07-13T00:00:00Z",
+      updated_at: "2026-07-13T00:01:00Z",
+    };
+    const update = vi
+      .spyOn(api, "updateRecommendation")
+      .mockRejectedValueOnce(new Error("No cache failure"))
+      .mockResolvedValueOnce(updated);
+    const { result } = renderHook(() => useUpdateRecommendation("aud_test"), {
+      wrapper: wrapper(client),
+    });
+
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync({ recommendationId: "rec_test", status: "completed" }),
+      ).rejects.toThrow("No cache failure");
+    });
+    await act(async () => {
+      await result.current.mutateAsync({ recommendationId: "rec_test", status: "completed" });
+    });
+
+    expect(update).toHaveBeenCalledTimes(2);
   });
 });

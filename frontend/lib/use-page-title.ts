@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-const PRODUCT_NAME = "VisibilityStack";
+const PRODUCT_NAME = "AI Visibility Audit";
 
 export function usePageTitle(title: string) {
   useEffect(() => {

@@ -36,6 +36,25 @@ def test_project_validation(client: TestClient, alice_headers: dict[str, str]) -
     assert "valid domain" in invalid.json()["error"]["message"].lower()
 
 
+def test_project_payload_rejects_client_owned_organization(
+    client: TestClient, alice_headers: dict[str, str]
+) -> None:
+    response = client.post(
+        "/api/projects",
+        headers=alice_headers,
+        json={
+            "name": "Tenant injection attempt",
+            "domain": "tenant-injection.example",
+            "org_id": "org_beta",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "org_id" in response.json()["error"]["message"]
+    projects = client.get("/api/projects", headers=alice_headers).json()["items"]
+    assert all(project["name"] != "Tenant injection attempt" for project in projects)
+
+
 def test_auth_is_required(client: TestClient) -> None:
     assert client.get("/api/projects").status_code == 401
 

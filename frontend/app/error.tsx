@@ -17,9 +17,7 @@ export default function ErrorPage({
           <span className="brand-mark" aria-hidden="true">
             V
           </span>
-          <span>
-            Visibility<span>Stack</span>
-          </span>
+          <span>AI Visibility</span>
         </div>
         <p className="eyebrow">Application error</p>
         <h1 id="error-title">This view couldn’t be loaded</h1>

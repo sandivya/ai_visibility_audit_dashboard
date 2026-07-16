@@ -1,24 +1,48 @@
-# VisibilityStack AI Visibility Audit Dashboard
+# AI Visibility Audit Dashboard
 
-VisibilityStack helps teams understand how their brand appears in AI-generated answers. Users can manage projects, run asynchronous visibility audits, inspect supporting evidence, review findings, and track recommendations without exposing data between organizations.
+This dashboard helps teams understand how their brand appears in AI-generated answers. Users can manage projects, run asynchronous visibility audits, inspect supporting evidence, review findings, and track recommendations without exposing data between organizations.
 
-The application is a complete local product built with Next.js, FastAPI, PostgreSQL, Alembic, and a durable background worker. It implements the full core workflow and all six optional extensions.
+The repository implements the assignment's core workflow with Next.js, FastAPI, PostgreSQL, Alembic, and a separate background worker. It also contains all six optional extensions. Core requirements and optional work are separated below so that bonus breadth is not mistaken for core correctness or time-box adherence.
+
+## Scope and prioritization
+
+### Core review boundary
+
+The core submission is the smallest path that demonstrates the requested senior full-stack concerns:
+
+1. Mock authentication for two organizations, with organization identity derived on the server.
+2. Project creation, listing, detail, and audit history.
+3. Idempotent audit creation and backend-side asynchronous processing.
+4. Explicit queued, processing, completed, and failed states.
+5. Persisted pages, prompts, findings, recommendations, and visibility scores.
+6. Backend-enforced tenant isolation, validation, understandable errors, migrations, and tests of risky flows.
+
+The additional authentication, worker-recovery, observability, pagination, rate-limiting, recommendation-workflow, and supply-chain controls are useful demonstrations, but they are not prerequisites for judging whether the assignment's core workflow is correct.
+
+### Time-box disclosure and retrospective cut line
+
+The assignment suggested 5-7 hours and recommended attempting only one or two bonuses. The actual effort was about 10 hours, including requirements review, implementation, UI/UX work, tests, optional features, and hardening. This exceeded the requested time box; this README does not recast it as compliant.
+
+With a strict seven-hour cut line, I would retain the core workflow, tenant isolation, state machine, idempotency, critical tests, and reviewer-friendly Docker Compose setup. I would choose the audit event log as the second optional feature and defer cursor pagination, rate limiting, recommendation statuses, global filtering, OIDC/RBAC, extended observability, and supply-chain automation. Implementing all six bonuses increased review surface and was not the most disciplined interpretation of the prompt.
 
 ## What is included
 
-| Area | Implementation |
-|---|---|
-| Product workflow | Projects, competitors, audits, scores, evidence, findings, recommendations, and status history |
-| Organization isolation | Server-scoped queries, tenant-safe foreign keys, and forced PostgreSQL row-level security |
-| Reliable processing | Durable queue, explicit audit state machine, retries, worker leases, and idempotent audit creation |
-| Security | Revocable sessions, role-based access, OIDC support, CSRF/CORS/host controls, CSP, and safe error responses |
-| Scale | Independent API and worker services, keyset pagination, persistent rate limiting, and bounded polling |
-| Quality | Backend, frontend, integration, accessibility, migration, RLS, and supply-chain checks in CI |
-| Local delivery | Docker Compose, migrations, seed data, environment template, health checks, and observability |
+| Scope | Area | Implementation |
+|---|---|---|
+| Core | Product workflow | Projects, competitors, audits, scores, evidence, findings, recommendations, and status history |
+| Core | Organization isolation | Server-scoped queries, tenant-safe foreign keys, and forced PostgreSQL row-level security |
+| Core | Reliable processing | Durable queue, explicit audit state machine, worker leases, bounded retries, and idempotent audit creation |
+| Core | Reviewer UX | Loading, empty, validation, active, completed, failed, and retry states with usable navigation |
+| Optional / hardening | Security | Revocable sessions, role-based access, optional OIDC, CSRF/CORS/host controls, CSP, and safe error responses |
+| Optional / hardening | Scale and operations | Keyset pagination, persistent rate limiting, health checks, metrics, and optional tracing |
+| Verification | Automated checks | Backend, frontend, browser, accessibility, migration, and restricted-role RLS checks are defined in the repository and CI configuration |
+| Bonus / delivery | Local stack | Docker Compose, migrations, seed data, environment template, PostgreSQL, API, worker, and frontend |
 
 ### Authorship and AI assistance disclosure
 
-Product planning, requirements interpretation, architecture direction, and prioritization were completed by me, Sandivya. Implementation was executed with a mix of AI coding agents across multiple tools under human direction. The work was also reviewed through LLM-as-a-judge evaluations across multiple tools, automated tests, and quality gates.
+I, Sandivya, interpreted the requirements, selected the architecture and scope, directed the implementation, reviewed the resulting behavior, and accepted the final design decisions. AI coding agents across multiple tools generated or revised substantial portions of the application code, tests, and documentation under that direction; I did not manually type every line.
+
+LLM-based reviews were used as one source of feedback, alongside automated checks and manual inspection. They are not presented as independent proof of correctness. This is a process-level disclosure because reliable line-by-line human-versus-agent attribution is not available. I remain accountable for the submitted behavior and trade-offs, while a technical discussion or live change is the appropriate way to verify my independent understanding of the implementation.
 
 ## Quick start
 
@@ -53,7 +77,9 @@ docker compose down
 5. Use the global findings page to filter by severity, category, project, and audit.
 6. Switch to `bob@beta.com` to confirm that each organization sees only its own data.
 
-To review failure and retry UX, create a local demo project with `fail` in its domain and run an audit.
+To review deterministic failure recovery, create a local demo project with `fail` in its domain and
+run an audit. The result explains that an unchanged rerun would fail again and routes the user to
+create a corrected project. Transient worker failures remain retryable after bounded retries.
 
 ### Demo users
 
@@ -66,35 +92,81 @@ Mock authentication is available only when `MOCK_AUTH_ENABLED=true`.
 
 ## Manual component setup
 
-Docker Compose is the recommended reviewer path. These commands provide the requested component-level setup for Windows PowerShell.
+Docker Compose is the recommended reviewer path. For manual setup, run the commands below from the repository root. Most commands work in any shell; environment-variable syntax is shown separately for macOS/Linux and Windows PowerShell.
 
 ### Database and migrations
 
-```powershell
+```console
 docker compose up -d db
 docker compose run --rm db-roles
 uv sync --locked --dev
+```
 
+Set the migration database URL for your shell:
+
+macOS/Linux:
+
+```bash
+export DATABASE_URL="postgresql+psycopg://visibility:visibility@127.0.0.1:5432/visibility"
+```
+
+Windows PowerShell:
+
+```powershell
 $env:DATABASE_URL = "postgresql+psycopg://visibility:visibility@127.0.0.1:5432/visibility"
-Set-Location backend
+```
+
+Then apply migrations and seed the database:
+
+```console
+cd backend
 uv run alembic upgrade head
 uv run python -m app.seed
 ```
 
 ### Backend API
 
+In a new terminal opened at the repository root, set the application database URL:
+
+macOS/Linux:
+
+```bash
+export DATABASE_URL="postgresql+psycopg://visibility_app:visibility-app-local@127.0.0.1:5432/visibility"
+```
+
+Windows PowerShell:
+
 ```powershell
 $env:DATABASE_URL = "postgresql+psycopg://visibility_app:visibility-app-local@127.0.0.1:5432/visibility"
+```
+
+Then start the API:
+
+```console
+cd backend
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
 ### Background worker
 
-Run in a second backend terminal:
+Run in a second terminal from the repository root. First set the worker database URL:
+
+macOS/Linux:
+
+```bash
+export DATABASE_URL="postgresql+psycopg://visibility_worker:visibility-worker-local@127.0.0.1:5432/visibility"
+```
+
+Windows PowerShell:
 
 ```powershell
-Set-Location backend
 $env:DATABASE_URL = "postgresql+psycopg://visibility_worker:visibility-worker-local@127.0.0.1:5432/visibility"
+```
+
+Then start the worker:
+
+```console
+cd backend
 uv run python -m app.worker
 ```
 
@@ -102,12 +174,13 @@ uv run python -m app.worker
 
 Run in a separate terminal:
 
-```powershell
-Set-Location frontend
+```console
+cd frontend
 npm ci
-$env:NEXT_PUBLIC_API_URL = "http://localhost:8000"
 npm run dev
 ```
+
+The frontend uses `http://localhost:8000` by default. To use another API URL, set `NEXT_PUBLIC_API_URL` before running `npm run dev`, using the shell-specific syntax shown above.
 
 These credentials are local defaults only. Deployed environments must use unique secrets and the settings documented in `.env.example`.
 
@@ -130,6 +203,19 @@ queued -> processing -> completed
 
 Worker leases recover abandoned work, transient failures use bounded retries, and final evidence and status commit atomically. PostgreSQL remains the source of truth; the browser polls only lightweight status data while an audit is active.
 
+### Simulated evidence and scoring
+
+This take-home does not call a live AI provider or crawler. Every audit response therefore includes
+an explicit `simulated-v2` methodology disclosure. Evidence is generated from a versioned digest of
+the normalized brand, domain, and order-independent competitor set, so rerunning an unchanged project
+produces the same evidence and score. Changing a relevant input or the methodology version can change
+the result.
+
+The 100-point demonstration score consists of a 20-point baseline, up to 50 points for prompt brand
+mentions, 15 points for healthy page responses, 10 points for descriptive page titles, and 5 points
+for prompts without tracked competitor mentions. Findings identify whether their support is page or
+prompt evidence, and recommendations link to the related finding when one exists.
+
 ### Idempotency, rate limiting, and pagination
 
 Audit creation is idempotent within `(organization, project, idempotency key)`. Concurrent duplicate requests converge on one audit. Organization-level rate limiting is persistent and atomic across API replicas, and `429` responses include `Retry-After` guidance.
@@ -148,7 +234,9 @@ The API and worker emit structured logs. Readiness validates database connectivi
 
 ## Tests and quality gates
 
-```powershell
+For reproducible evidence, run checks from a clean clone of the exact commit being reviewed. Record the revision with `git rev-parse HEAD` and confirm `git status --short` is empty before attributing results to that revision. Uncommitted files and results from a different checkout are not submission evidence.
+
+```console
 uv sync --locked --dev
 uv run ruff check backend
 uv run ruff format --check backend
@@ -156,7 +244,7 @@ uv run mypy backend/app
 uv run bandit -q -r backend/app
 uv run pytest
 
-Set-Location frontend
+cd frontend
 npm ci
 npm run test:coverage
 npm run lint
@@ -165,16 +253,20 @@ npm run typecheck
 npm run build
 npm audit --audit-level=high
 
-# With the Compose stack running:
+# With the Compose stack running in another terminal:
 npx --no-install playwright install chromium
 npm run test:e2e
 ```
 
-Tests cover authentication, authorization, tenant isolation, validation, audit lifecycle and recovery, idempotency, concurrency, rate limiting, filtering, pagination, security headers, UI state, mobile behavior, and accessibility. CI also verifies reversible migrations, restricted-role RLS, production builds, dependency and secret scans, container vulnerabilities, and software bills of materials.
+The test suites target authentication, authorization, tenant isolation, validation, audit lifecycle and recovery, idempotency, concurrency, rate limiting, filtering, pagination, security headers, UI state, mobile behavior, and accessibility. The default backend test fixture uses SQLite for speed, so it does not by itself prove PostgreSQL-specific behavior such as row-level security or `SKIP LOCKED`. The CI workflow is configured to provision PostgreSQL, exercise reversible migrations and restricted roles, build the production frontend, and run the browser suite against the Compose stack.
 
-## Optional extensions
+CI configuration describes intended gates; it is not evidence that a particular commit passed them. Use the checks and artifacts attached to the exact submitted revision, or rerun the commands above, as the authoritative result.
 
-All six optional extensions are implemented:
+See [TEST_COVERAGE.md](TEST_COVERAGE.md) for requirement-to-test traceability and the boundaries of each evidence type.
+
+## Optional extensions present in the repository
+
+All six optional extensions are present. The assignment recommended choosing only one or two, so this list should be treated as additional implementation surface, not as six independent reasons to overlook the time-box and prioritization trade-off:
 
 1. Signed keyset pagination for projects, audits, findings, and evidence.
 2. Append-only audit lifecycle and generated-item events.
@@ -187,7 +279,7 @@ All six optional extensions are implemented:
 
 - AI search, crawling, and scoring are deterministic because no paid provider is configured. A real provider requires SSRF-safe egress, domain validation, timeouts, and cost controls.
 - PostgreSQL is the production database and durable queue for this workload. At much higher throughput, processing can move behind a managed queue with a dead-letter queue while PostgreSQL remains the system of record.
-- SQLite is used only for fast isolated tests; PostgreSQL is canonical and is exercised by CI and Docker Compose.
+- SQLite is used only for fast isolated local tests; PostgreSQL is canonical, and CI is configured to exercise the migrated schema and restricted roles while Docker Compose provides the reviewer stack.
 - Public self-registration, billing, and permanent cloud hosting are outside the demonstrated scope.
 - TLS termination, managed secrets, private networking, encrypted backups, retention, alert routing, and disaster recovery belong to the deployment platform.
 
@@ -200,4 +292,6 @@ Before accepting production traffic, run migrations as a separate administrative
 ## Project notes
 
 - **External services:** No paid AI, search, or crawling services are required.
-- **Approximate time spent:** About 10 hours across requirements review, implementation, UI/UX polish, tests, and enterprise hardening.
+- **Approximate time spent:** About 10 hours across requirements review, implementation, UI/UX polish, tests, optional features, and hardening. This exceeded the requested 5-7 hours.
+- **Provenance:** AI assistance is disclosed above at the process level; no reliable line-by-line attribution log exists.
+- **Review revision:** Treat only a named, clean Git commit as the reproducible submission boundary.

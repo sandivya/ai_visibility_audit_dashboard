@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.database import set_tenant_context
 from app.models import Audit, Finding, Project, Recommendation, utcnow
 from app.pagination import cursor_scope, encode_cursor
-from app.routers.common import cursor_values, finding_out
+from app.routers.common import cursor_values, finding_out, recommendation_out
 from app.schemas import FindingPage, RecommendationOut, RecommendationUpdate
 
 router = APIRouter()
@@ -94,7 +94,7 @@ def update_recommendation(
     payload: RecommendationUpdate,
     db: Db,
     user: Writer,
-) -> Recommendation:
+) -> RecommendationOut:
     recommendation = db.scalar(
         select(Recommendation).where(
             Recommendation.id == recommendation_id,
@@ -108,4 +108,13 @@ def update_recommendation(
     db.commit()
     set_tenant_context(db, user.org_id)
     db.refresh(recommendation)
-    return recommendation
+    findings = db.scalars(
+        select(Finding).where(
+            Finding.org_id == user.org_id,
+            Finding.audit_id == recommendation.audit_id,
+        )
+    ).all()
+    return recommendation_out(
+        recommendation,
+        findings_by_title={finding.title: finding for finding in findings},
+    )

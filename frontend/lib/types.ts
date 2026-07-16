@@ -14,12 +14,21 @@ export type AuthConfig = {
 export type CursorPage<T> = { items: T[]; next_cursor: string | null };
 export type AuditStatus = "queued" | "processing" | "completed" | "failed";
 export type RecommendationStatus = "open" | "in_progress" | "completed" | "dismissed";
+export type EvidenceKind = "pages" | "prompts";
+export type AuditMethodology = {
+  mode: "simulated";
+  version: string;
+  disclosure: string;
+  scoring_summary: string;
+  stable_inputs: string[];
+};
 export type AuditSummary = {
   id: string;
   status: AuditStatus;
   visibility_score: number | null;
   created_at: string;
   updated_at: string;
+  methodology: AuditMethodology;
 };
 export type Project = {
   id: string;
@@ -37,6 +46,7 @@ export type Finding = {
   project_name: string;
   severity: string;
   category: string;
+  evidence_kind: EvidenceKind;
   title: string;
   description: string;
   created_at: string;
@@ -48,6 +58,9 @@ export type Recommendation = {
   title: string;
   description: string;
   status: RecommendationStatus;
+  evidence_kind: EvidenceKind;
+  related_finding_id: string | null;
+  related_finding_category: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -73,10 +86,14 @@ export type AuditStatusDetail = Pick<
 > & {
   project_id: string;
   error_message: string | null;
+  retryable: boolean;
+  failure_kind: "deterministic_demo" | null;
 };
 export type Audit = AuditSummary & {
   project_id: string;
   error_message: string | null;
+  retryable: boolean;
+  failure_kind: "deterministic_demo" | null;
   pages: AuditPageEvidence[];
   prompts: AuditPromptEvidence[];
   findings: Finding[];

@@ -78,13 +78,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
         Skip to main content
       </a>
       <aside className="sidebar">
-        <Link href="/" className="brand" aria-label="VisibilityStack projects">
+        <Link href="/" className="brand" aria-label="AI Visibility projects">
           <span className="brand-mark" aria-hidden="true">
             V
           </span>
-          <span>
-            Visibility<span>Stack</span>
-          </span>
+          <span>AI Visibility</span>
         </Link>
         <nav aria-label="Primary navigation">
           <Link

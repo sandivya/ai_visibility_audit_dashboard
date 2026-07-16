@@ -13,6 +13,7 @@ describe("FindingCard", () => {
       project_name: "Acme",
       severity: "high",
       category: "ai_visibility",
+      evidence_kind: "prompts",
       title: "Brand is absent",
       description: "The brand did not appear in audited prompts.",
       created_at: "2026-07-13T00:00:00Z",
@@ -24,6 +25,9 @@ describe("FindingCard", () => {
 
     expect(markup).toContain('href="/projects/project_1"');
     expect(markup).toContain('href="/audits/audit_12345678"');
+    expect(markup).toContain('id="finding-finding_1"');
+    expect(markup).toContain('aria-labelledby="finding-finding_1-title"');
+    expect(markup).toContain('id="finding-finding_1-title"');
     expect(markup).toContain("Acme");
   });
 });

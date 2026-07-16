@@ -21,7 +21,7 @@ def _decode(value: str) -> bytes:
 
 def _cursor_key() -> bytes:
     return hmac.new(
-        get_settings().session_secret.encode(), b"visibilitystack-cursor-v1", hashlib.sha256
+        get_settings().session_secret.encode(), b"ai-visibility-audit-cursor-v1", hashlib.sha256
     ).digest()
 
 

@@ -103,6 +103,56 @@
   height: 17px;
   width: 17px;
 }
+.failure-guidance {
+  color: var(--muted);
+  font-size: 13px;
+  margin: -4px 0 14px;
+  max-width: 72ch;
+}
+
+.methodology-panel {
+  background: #eef5f0;
+  border: 1px solid #c9dbd0;
+  border-left: 4px solid var(--green);
+  border-radius: 12px;
+  margin: 0 0 18px;
+  padding: 16px 18px;
+}
+.methodology-panel-compact {
+  margin-top: -14px;
+  margin-bottom: 28px;
+}
+.methodology-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+.methodology-heading h2 {
+  font-size: 16px;
+  margin: 3px 0 0;
+}
+.methodology-heading > span {
+  background: var(--white);
+  border: 1px solid #bfd2c6;
+  border-radius: 999px;
+  color: var(--green-dark);
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 5px 8px;
+}
+.methodology-panel > p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 10px 0 0;
+  max-width: 88ch;
+}
+.methodology-panel .methodology-score {
+  color: #344b40;
+  font-weight: 650;
+}
 
 .audit-jump-nav {
   align-items: center;
@@ -466,5 +516,9 @@
   }
   .failure-actions > * {
     width: 100%;
+  }
+  .methodology-heading {
+    flex-direction: column;
+    gap: 8px;
   }
 }

@@ -66,7 +66,7 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 app = FastAPI(
-    title="VisibilityStack Audit API",
+    title="AI Visibility Audit API",
     version="1.0.0",
     docs_url="/docs" if settings.expose_api_docs else None,
     redoc_url="/redoc" if settings.expose_api_docs else None,

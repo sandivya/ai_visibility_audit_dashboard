@@ -3,11 +3,16 @@ import type {
   AuditPageEvidence,
   AuditPromptEvidence,
   AuditStatusDetail,
+  EvidenceKind,
   Finding,
 } from "@/lib/types";
 
 type AuditVersion = Pick<Audit, "status" | "updated_at">;
 type StatusVersion = Pick<AuditStatusDetail, "status" | "updated_at">;
+
+export function auditEvidenceAnchor(kind: EvidenceKind) {
+  return kind === "pages" ? "#page-evidence" : "#prompt-evidence";
+}
 
 export function isAuditFinalizing(
   audit: AuditVersion | undefined,

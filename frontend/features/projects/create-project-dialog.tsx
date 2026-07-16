@@ -1,7 +1,7 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { FormEvent, useEffect, useState, type RefObject } from "react";
+import { FormEvent, useState, type RefObject } from "react";
 import { ErrorBox } from "@/components/shell";
 import { validateProjectDraft, type ProjectDraft, type ProjectFormErrors } from "@/lib/validation";
 
@@ -26,10 +26,6 @@ export function CreateProjectDialog({
 }: CreateProjectDialogProps) {
   const [errors, setErrors] = useState<ProjectFormErrors>({});
 
-  useEffect(() => {
-    if (!open) setErrors({});
-  }, [open]);
-
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isPending) return;
@@ -51,11 +47,18 @@ export function CreateProjectDialog({
     if (field instanceof HTMLElement) field.focus();
   }
 
+  function preventDismissal(event: { preventDefault: () => void }) {
+    if (isPending) event.preventDefault();
+  }
+
   return (
     <Dialog.Root
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!isPending) onOpenChange(nextOpen);
+        if (!isPending) {
+          if (!nextOpen) setErrors({});
+          onOpenChange(nextOpen);
+        }
       }}
     >
       <Dialog.Portal>
@@ -68,12 +71,8 @@ export function CreateProjectDialog({
               returnFocusRef.current.focus();
             }
           }}
-          onEscapeKeyDown={(event) => {
-            if (isPending) event.preventDefault();
-          }}
-          onPointerDownOutside={(event) => {
-            if (isPending) event.preventDefault();
-          }}
+          onEscapeKeyDown={preventDismissal}
+          onPointerDownOutside={preventDismissal}
         >
           <div>
             <p className="eyebrow">New workspace</p>

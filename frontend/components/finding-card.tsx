@@ -8,10 +8,11 @@ type FindingCardProps = {
 };
 
 export function FindingCard({ item, evidenceHref, showContext = false }: FindingCardProps) {
-  const titleId = `finding-${item.id}`;
+  const anchorId = `finding-${item.id}`;
+  const titleId = `${anchorId}-title`;
 
   return (
-    <article className="result-card finding-card" aria-labelledby={titleId}>
+    <article className="result-card finding-card" id={anchorId} aria-labelledby={titleId}>
       <div className="finding-card-tags">
         <span className={`tag ${item.severity}`}>{item.severity}</span>
         <span className="category">{item.category.replaceAll("_", " ")}</span>

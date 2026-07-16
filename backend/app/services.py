@@ -15,6 +15,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import get_settings
 from app.database import SessionLocal, set_tenant_context
+from app.methodology import canonical_competitor_set, simulated_configuration_digest
 from app.models import (
     Audit,
     AuditEvent,
@@ -62,7 +63,9 @@ def _aware(value: datetime) -> datetime:
 def _database_now(db: Session) -> datetime:
     if db.get_bind().dialect.name != "postgresql":
         return utcnow()
-    value = db.scalar(select(func.now()))
+    # clock_timestamp() is database-authoritative wall time. Unlike now(), it does
+    # not freeze at transaction start while a request waits for an advisory lock.
+    value = db.scalar(text("SELECT clock_timestamp()"))
     return _aware(value) if isinstance(value, datetime) else utcnow()
 
 
@@ -115,11 +118,15 @@ def calculate_visibility_score(pages: list[AuditPage], prompts: list[AuditPrompt
 def build_simulated_evidence(
     audit: Audit,
 ) -> tuple[list[AuditPage], list[AuditPrompt], list[Finding], list[Recommendation]]:
-    """Build deterministic-but-run-specific evidence for the simulated provider."""
+    """Build versioned evidence that is stable for an unchanged project configuration."""
     domain = audit.project.domain
     brand = audit.project.name
-    competitors = audit.project.competitors
-    simulation = hashlib.sha256(f"{audit.id}:{domain}".encode()).digest()
+    competitors = canonical_competitor_set(audit.project.competitors)
+    simulation = simulated_configuration_digest(
+        brand=brand,
+        domain=domain,
+        competitors=competitors,
+    )
     trusted_prompt_mentions_brand = simulation[0] % 5 != 0
     trusted_prompt_competitors = competitors[1:2] if simulation[1] % 2 == 0 else []
     product_title = f"{brand} products and solutions" if simulation[2] % 3 else "Products"
@@ -372,9 +379,9 @@ def organization_creation_lock(db: Session, org_id: str) -> Iterator[None]:
         yield
 
 
-def enforce_rate_limit(db: Session, org_id: str) -> None:
+def enforce_rate_limit(db: Session, org_id: str, *, now: datetime | None = None) -> None:
     settings = get_settings()
-    now = _database_now(db)
+    now = now or _database_now(db)
     cutoff = now - timedelta(seconds=settings.audit_rate_window_seconds)
     cleanup_cutoff = cutoff - timedelta(seconds=settings.audit_rate_window_seconds)
     db.execute(
@@ -431,12 +438,20 @@ def create_audit(db: Session, project: Project, key: str) -> tuple[Audit, bool]:
         if existing:
             db.commit()
             return existing, False
-        enforce_rate_limit(db, project.org_id)
-        audit = Audit(org_id=project.org_id, project_id=project.id, idempotency_key=key)
+        created_at = _database_now(db)
+        enforce_rate_limit(db, project.org_id, now=created_at)
+        audit = Audit(
+            org_id=project.org_id,
+            project_id=project.id,
+            idempotency_key=key,
+            available_at=created_at,
+            created_at=created_at,
+            updated_at=created_at,
+        )
         try:
             db.add(audit)
             db.flush()
-            db.add(AuditRateAttempt(org_id=project.org_id))
+            db.add(AuditRateAttempt(org_id=project.org_id, created_at=created_at))
             event(db, audit, AuditEventType.audit_created, "Audit queued for durable processing")
             db.flush()
             db.commit()
@@ -535,7 +550,10 @@ def process_claimed_audit(audit_id: str, worker_id: str) -> None:
             return
         if "fail" in audit.project.domain:
             transition(audit, AuditStatus.failed)
-            audit.error_message = "The simulated provider could not analyze this domain."
+            audit.error_message = (
+                "The simulated provider could not analyze this domain. In demo mode, domains "
+                "containing 'fail' are non-retryable until the project inputs change."
+            )
             audit.locked_at = None
             audit.worker_id = None
             event(db, audit, AuditEventType.audit_failed, "Audit failed in the simulated provider")
@@ -640,7 +658,9 @@ def record_worker_poll(worker_id: str, worked: bool) -> None:
         now = _database_now(db)
         heartbeat = db.get(WorkerHeartbeat, worker_id)
         if heartbeat is None:
-            heartbeat = WorkerHeartbeat(worker_id=worker_id, last_seen_at=now)
+            heartbeat = WorkerHeartbeat(
+                worker_id=worker_id, last_seen_at=now, consecutive_failures=0
+            )
             db.add(heartbeat)
         queued_count = int(
             db.scalar(
@@ -684,7 +704,9 @@ def record_worker_poll_failure(worker_id: str) -> None:
         now = _database_now(db)
         heartbeat = db.get(WorkerHeartbeat, worker_id)
         if heartbeat is None:
-            heartbeat = WorkerHeartbeat(worker_id=worker_id, last_seen_at=now)
+            heartbeat = WorkerHeartbeat(
+                worker_id=worker_id, last_seen_at=now, consecutive_failures=0
+            )
             db.add(heartbeat)
         heartbeat.last_error_at = now
         heartbeat.consecutive_failures += 1
