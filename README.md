@@ -25,24 +25,11 @@ The assignment suggested 5-7 hours and recommended attempting only one or two bo
 
 With a strict seven-hour cut line, I would retain the core workflow, tenant isolation, state machine, idempotency, critical tests, and reviewer-friendly Docker Compose setup. I would choose the audit event log as the second optional feature and defer cursor pagination, rate limiting, recommendation statuses, global filtering, OIDC/RBAC, extended observability, and supply-chain automation. Implementing all six bonuses increased review surface and was not the most disciplined interpretation of the prompt.
 
-## What is included
+## Authorship and AI assistance
 
-| Scope | Area | Implementation |
-|---|---|---|
-| Core | Product workflow | Projects, competitors, audits, scores, evidence, findings, recommendations, and status history |
-| Core | Organization isolation | Server-scoped queries, tenant-safe foreign keys, and forced PostgreSQL row-level security |
-| Core | Reliable processing | Durable queue, explicit audit state machine, worker leases, bounded retries, and idempotent audit creation |
-| Core | Reviewer UX | Loading, empty, validation, active, completed, failed, and retry states with usable navigation |
-| Optional / hardening | Security | Revocable sessions, role-based access, optional OIDC, CSRF/CORS/host controls, CSP, and safe error responses |
-| Optional / hardening | Scale and operations | Keyset pagination, persistent rate limiting, health checks, metrics, and optional tracing |
-| Verification | Automated checks | Backend, frontend, browser, accessibility, migration, and restricted-role RLS checks are defined in the repository and CI configuration |
-| Bonus / delivery | Local stack | Docker Compose, migrations, seed data, environment template, PostgreSQL, API, worker, and frontend |
-
-### Authorship and AI assistance disclosure
-
-I, Sandivya, interpreted the requirements, selected the architecture and scope, directed the implementation, reviewed the resulting behavior, and accepted the final design decisions. AI coding agents across multiple tools generated or revised substantial portions of the application code, tests, and documentation under that direction; I did not manually type every line.
-
-LLM-based reviews were used as one source of feedback, alongside automated checks and manual inspection. They are not presented as independent proof of correctness. This is a process-level disclosure because reliable line-by-line human-versus-agent attribution is not available. I remain accountable for the submitted behavior and trade-offs, while a technical discussion or live change is the appropriate way to verify my independent understanding of the implementation.
+I planned the architecture, made the key product and technical decisions, and tested the final
+product. I used AI tools to accelerate research, implementation, code review, and verification,
+while reviewing and owning the final result.
 
 ## Quick start
 
