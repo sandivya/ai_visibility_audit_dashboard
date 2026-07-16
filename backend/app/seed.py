@@ -27,6 +27,9 @@ DEMO_AUDIT_IDS = {
     "prj_acme_demo": "aud_35a0c6e294ab4f6e9d12",
     "prj_beta_demo": "aud_b7e49dc231c84a05a6f3",
 }
+ACME_FAILED_PROJECT_ID = "prj_acme_failure_demo"
+ACME_UNAUDITED_PROJECT_ID = "prj_acme_launch_demo"
+ACME_FAILED_AUDIT_ID = "aud_2f93de71c40b48b9a6e5"
 
 
 def _aware(value: datetime) -> datetime:
@@ -191,6 +194,62 @@ def _completed_demo_audit(db: Session, project: Project, *, now: datetime) -> No
         )
 
 
+def _failed_demo_audit(db: Session, project: Project, *, now: datetime) -> None:
+    existing = db.scalar(
+        select(Audit).where(
+            Audit.org_id == project.org_id,
+            Audit.project_id == project.id,
+            Audit.idempotency_key == DEMO_AUDIT_IDEMPOTENCY_KEY,
+        )
+    )
+    if existing is not None:
+        return
+
+    started_at = max(_aware(project.created_at), now - timedelta(minutes=4))
+    failed_at = now
+    error_message = (
+        "The simulated provider could not analyze this domain. In demo mode, domains containing "
+        "'fail' are non-retryable until the project inputs change."
+    )
+    audit = Audit(
+        id=ACME_FAILED_AUDIT_ID,
+        org_id=project.org_id,
+        project_id=project.id,
+        status=AuditStatus.failed,
+        error_message=error_message,
+        idempotency_key=DEMO_AUDIT_IDEMPOTENCY_KEY,
+        attempt_count=1,
+        available_at=started_at,
+        created_at=started_at,
+        updated_at=failed_at,
+    )
+    db.add(audit)
+    db.flush()
+    messages = (
+        (AuditEventType.audit_created, "Demo audit queued for durable processing", started_at),
+        (
+            AuditEventType.audit_started,
+            "Visibility analysis started",
+            started_at + timedelta(minutes=1),
+        ),
+        (
+            AuditEventType.audit_failed,
+            "Audit failed in the simulated provider",
+            failed_at,
+        ),
+    )
+    for event_type, message, created_at in messages:
+        db.add(
+            AuditEvent(
+                org_id=audit.org_id,
+                audit_id=audit.id,
+                event_type=event_type,
+                message=message,
+                created_at=created_at,
+            )
+        )
+
+
 def seed(*, include_demo_audits: bool = True) -> None:
     with SessionLocal() as db:
         now = utcnow()
@@ -234,8 +293,28 @@ def seed(*, include_demo_audits: bool = True) -> None:
         )
         db.flush()
         if include_demo_audits:
+            failed_project = _project(
+                db,
+                project_id=ACME_FAILED_PROJECT_ID,
+                org_id=acme.id,
+                name="Acme Recovery Demo",
+                domain="fail-acme-recovery.com",
+                competitors=["glowco.com"],
+                created_at=now - timedelta(days=2),
+            )
+            _project(
+                db,
+                project_id=ACME_UNAUDITED_PROJECT_ID,
+                org_id=acme.id,
+                name="Acme UK Launch",
+                domain="acme-uk-launch.com",
+                competitors=["glowco.com", "naturalskin.com"],
+                created_at=now - timedelta(days=3),
+            )
+            db.flush()
             _completed_demo_audit(db, acme_project, now=now)
             _completed_demo_audit(db, beta_project, now=now)
+            _failed_demo_audit(db, failed_project, now=now - timedelta(hours=1))
         db.commit()
 
 

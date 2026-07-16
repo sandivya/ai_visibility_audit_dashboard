@@ -60,9 +60,11 @@ Open:
 - API readiness: `http://localhost:8000/api/health/ready`
 - Prometheus metrics: `http://localhost:8000/metrics`
 
-Compose creates restricted database roles, applies migrations, seeds two evidence-backed completed
-demo audits, and starts PostgreSQL, the API, worker, and frontend. Seeding is idempotent: restarting
-the stack does not duplicate audits or reset recommendation progress. To stop the application:
+Compose creates restricted database roles, applies migrations, and starts PostgreSQL, the API,
+worker, and frontend. Acme is seeded with one completed, one failed, and one not-audited project—in
+that order—while Beta has one completed project. Both completed projects contain full evidence.
+Seeding is idempotent: restarting the stack does not duplicate audits or reset recommendation
+progress. To stop the application:
 
 ```bash
 docker compose down

@@ -27,6 +27,12 @@ async function createProject(
 test("fresh demo workspaces open with completed audit evidence", async ({ page }, testInfo) => {
   await signInAsAlice(page);
 
+  const acmeProjects = page.locator(".project-card");
+  await expect(acmeProjects).toHaveCount(3);
+  await expect(acmeProjects.nth(0)).toContainText("Acme Skincare");
+  await expect(acmeProjects.nth(0).getByLabel("Status: completed")).toBeVisible();
+  await expect(acmeProjects.nth(1).getByLabel("Status: failed")).toBeVisible();
+  await expect(acmeProjects.nth(2).getByText("not audited", { exact: true })).toBeVisible();
   const acmeCard = page.locator(".project-card").filter({ hasText: "Acme Skincare" });
   await expect(acmeCard.getByLabel("Status: completed")).toBeVisible();
   await expect(acmeCard.getByLabel(/Score: \d+ out of 100/)).toBeVisible();
